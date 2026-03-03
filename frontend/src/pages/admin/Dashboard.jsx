@@ -22,7 +22,7 @@ function Dashboard() {
   const [students, setStudents] = useState([]);
   const [fraudLogs, setFraudLogs] = useState([]);
   const [voteAnalytics, setVoteAnalytics] = useState(null);
-  const [candidates, setCandidates] = useState([]); // NEW
+  const [candidates, setCandidates] = useState([]);
 
   const [activeTab, setActiveTab] = useState("students");
   const [search, setSearch] = useState("");
@@ -158,7 +158,7 @@ function Dashboard() {
     fetchStudents();
   };
 
-  /* ================= FILTER ================= */
+  /* ================= FILTER & PAGINATION ================= */
 
   const filteredStudents = students.filter((s) =>
     (s.name || "").toLowerCase().includes(search.toLowerCase()) ||
@@ -188,7 +188,7 @@ function Dashboard() {
         label: "Votes",
         data:
           voteAnalytics?.votesPerCandidate?.map((v) => v.votes) || [],
-        backgroundColor: "rgba(99,102,241,0.7)",
+        backgroundColor: "rgba(0,212,255,0.7)",
       },
     ],
   };
@@ -199,214 +199,234 @@ function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-indigo-900 text-white p-8">
+    <div className="min-h-screen fade-page">
+      <div className="container-modern">
 
-      {/* HEADER */}
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold">Admin Dashboard</h1>
-        <button
-          onClick={handleLogout}
-          className="bg-gray-700 hover:bg-gray-800 px-4 py-2 rounded"
-        >
-          Logout
-        </button>
-      </div>
+        {/* HEADER */}
+        <div className="flex justify-between items-center mb-12">
+          <h1 className="text-3xl font-bold tracking-wide">
+            Admin Dashboard
+          </h1>
 
-      {/* CARDS */}
-      <div className="grid grid-cols-4 gap-6 mb-10">
-        <Card title="Total Students" value={students.length} />
-        <Card
-          title="Approved"
-          value={students.filter((s) => s.status === "approved").length}
-          color="text-green-400"
-        />
-        <Card
-          title="Pending"
-          value={students.filter((s) => s.status === "pending").length}
-          color="text-yellow-400"
-        />
-        <Card
-          title="Blacklisted"
-          value={students.filter((s) => s.isBlacklisted).length}
-          color="text-red-500"
-        />
-      </div>
+          <button
+            onClick={handleLogout}
+            className="px-5 py-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 transition"
+          >
+            Logout
+          </button>
+        </div>
 
-      {/* TABS */}
-      <div className="flex space-x-4 mb-6">
-        <TabButton label="Students" active={activeTab === "students"} onClick={() => setActiveTab("students")} />
-        <TabButton label="Candidates" active={activeTab === "candidates"} onClick={() => setActiveTab("candidates")} />
-        <TabButton label="Fraud Logs" active={activeTab === "fraud"} onClick={() => setActiveTab("fraud")} />
-        <TabButton label="Analytics" active={activeTab === "analytics"} onClick={() => setActiveTab("analytics")} />
-      </div>
+        {/* STAT CARDS */}
+        <div className="grid md:grid-cols-4 gap-6 mb-12">
+          <Card title="Total Students" value={students.length} />
+          <Card title="Approved"
+            value={students.filter((s) => s.status === "approved").length}
+            color="text-green-400" />
+          <Card title="Pending"
+            value={students.filter((s) => s.status === "pending").length}
+            color="text-yellow-400" />
+          <Card title="Blacklisted"
+            value={students.filter((s) => s.isBlacklisted).length}
+            color="text-red-500" />
+        </div>
 
-      {/* CANDIDATES */}
-      {activeTab === "candidates" && (
-        <TableWrapper>
-          <thead className="bg-white/20">
-            <tr>
-              <th className="p-3">Name</th>
-              <th>Email</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {candidates.map((c) => (
-              <tr key={c._id} className="border-t border-white/20">
-                <td className="p-3">{c.student?.name}</td>
-                <td>{c.student?.email}</td>
-                <td>{c.status}</td>
-                <td className="space-x-2">
-                  {c.status === "pending" && (
-                    <>
-                      <button onClick={() => approveCandidate(c._id)} className="bg-green-600 px-2 py-1 rounded">Approve</button>
-                      <button onClick={() => rejectCandidate(c._id)} className="bg-red-600 px-2 py-1 rounded">Reject</button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </TableWrapper>
-      )}
+        {/* TABS */}
+        <div className="flex flex-wrap gap-4 mb-8">
+          <TabButton label="Students" active={activeTab === "students"} onClick={() => setActiveTab("students")} />
+          <TabButton label="Candidates" active={activeTab === "candidates"} onClick={() => setActiveTab("candidates")} />
+          <TabButton label="Fraud Logs" active={activeTab === "fraud"} onClick={() => setActiveTab("fraud")} />
+          <TabButton label="Analytics" active={activeTab === "analytics"} onClick={() => setActiveTab("analytics")} />
+        </div>
 
-      {/* STUDENTS */}
-      {activeTab === "students" && (
-        <>
-          <input
-            type="text"
-            placeholder="Search..."
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setStudentPage(1);
-            }}
-            className="mb-4 p-2 rounded bg-white/20 w-full"
-          />
-
-          <TableWrapper>
-            <thead className="bg-white/20">
+        {/* ================= CANDIDATES ================= */}
+        {activeTab === "candidates" && (
+          <GlassTable>
+            <thead>
               <tr>
-                <th className="p-3">ID</th>
-                <th>Name</th>
+                <th className="p-3">Name</th>
                 <th>Email</th>
                 <th>Status</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {currentStudents.map((s) => (
-                <tr key={s._id} className="border-t border-white/20 h-[55px]">
-                  <td className="p-3">{s.studentId}</td>
-                  <td>{s.name}</td>
-                  <td>{s.email}</td>
-                  <td>{s.isBlacklisted ? "Blacklisted" : s.status}</td>
+              {candidates.map((c) => (
+                <tr key={c._id} className="border-t border-white/10">
+                  <td className="p-3">{c.student?.name}</td>
+                  <td>{c.student?.email}</td>
+                  <td>{c.status}</td>
                   <td className="space-x-2">
-                    {s.status === "pending" && (
+                    {c.status === "pending" && (
                       <>
-                        <button onClick={() => approveStudent(s._id)} className="bg-green-600 px-2 py-1 rounded">Approve</button>
-                        <button onClick={() => rejectStudent(s._id)} className="bg-yellow-500 px-2 py-1 rounded">Reject</button>
+                        <ActionBtn type="success" onClick={() => approveCandidate(c._id)}>Approve</ActionBtn>
+                        <ActionBtn type="danger" onClick={() => rejectCandidate(c._id)}>Reject</ActionBtn>
                       </>
                     )}
-
-                    {s.isBlacklisted ? (
-                      <button onClick={() => unblockStudent(s._id)} className="bg-blue-500 px-2 py-1 rounded">Unblock</button>
-                    ) : (
-                      <button onClick={() => blacklistStudent(s._id)} className="bg-red-600 px-2 py-1 rounded">Block</button>
-                    )}
-
-                    <button onClick={() => deleteStudent(s._id)} className="bg-gray-600 px-2 py-1 rounded">Delete</button>
                   </td>
                 </tr>
               ))}
             </tbody>
-          </TableWrapper>
+          </GlassTable>
+        )}
 
-          <Pagination currentPage={studentPage} totalPages={studentTotalPages} setPage={setStudentPage} />
-        </>
-      )}
+        {/* ================= STUDENTS ================= */}
+        {activeTab === "students" && (
+          <>
+            <input
+              type="text"
+              placeholder="Search..."
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setStudentPage(1);
+              }}
+              className="modern-input mb-6"
+            />
 
-      {/* FRAUD */}
-      {activeTab === "fraud" && (
-        <>
-          <TableWrapper>
-            <thead className="bg-white/20">
-              <tr>
-                <th className="p-3">Student Hash</th>
-                <th>Reason</th>
-                <th>IP</th>
-                <th>Severity</th>
-              </tr>
-            </thead>
-            <tbody>
-              {currentFraud.map((log) => (
-                <tr key={log._id} className="border-t border-white/20">
-                  <td className="p-3 text-xs">{log.studentHash}</td>
-                  <td>{log.reason}</td>
-                  <td>{log.ipAddress}</td>
-                  <td>{log.severity}</td>
+            <GlassTable>
+              <thead>
+                <tr>
+                  <th className="p-3">ID</th>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Status</th>
+                  <th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </TableWrapper>
+              </thead>
+              <tbody>
+                {currentStudents.map((s) => (
+                  <tr key={s._id} className="border-t border-white/10">
+                    <td className="p-3">{s.studentId}</td>
+                    <td>{s.name}</td>
+                    <td>{s.email}</td>
+                    <td>{s.isBlacklisted ? "Blacklisted" : s.status}</td>
+                    <td className="space-x-2">
+                      {s.status === "pending" && (
+                        <>
+                          <ActionBtn type="success" onClick={() => approveStudent(s._id)}>Approve</ActionBtn>
+                          <ActionBtn type="warning" onClick={() => rejectStudent(s._id)}>Reject</ActionBtn>
+                        </>
+                      )}
+                      {s.isBlacklisted ? (
+                        <ActionBtn type="info" onClick={() => unblockStudent(s._id)}>Unblock</ActionBtn>
+                      ) : (
+                        <ActionBtn type="danger" onClick={() => blacklistStudent(s._id)}>Block</ActionBtn>
+                      )}
+                      <ActionBtn type="secondary" onClick={() => deleteStudent(s._id)}>Delete</ActionBtn>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </GlassTable>
 
-          <Pagination currentPage={fraudPage} totalPages={fraudTotalPages} setPage={setFraudPage} />
-        </>
-      )}
+            <Pagination currentPage={studentPage} totalPages={studentTotalPages} setPage={setStudentPage} />
+          </>
+        )}
 
-      {/* ANALYTICS */}
-      {activeTab === "analytics" && voteAnalytics && (
-        <div className="bg-white/10 p-6 rounded-xl h-[300px]">
-          <Bar data={chartData} />
-        </div>
-      )}
+        {/* ================= FRAUD ================= */}
+        {activeTab === "fraud" && (
+          <>
+            <GlassTable>
+              <thead>
+                <tr>
+                  <th className="p-3">Student Hash</th>
+                  <th>Reason</th>
+                  <th>IP</th>
+                  <th>Severity</th>
+                </tr>
+              </thead>
+              <tbody>
+                {currentFraud.map((log) => (
+                  <tr key={log._id} className="border-t border-white/10">
+                    <td className="p-3 text-xs">{log.studentHash}</td>
+                    <td>{log.reason}</td>
+                    <td>{log.ipAddress}</td>
+                    <td>{log.severity}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </GlassTable>
+
+            <Pagination currentPage={fraudPage} totalPages={fraudTotalPages} setPage={setFraudPage} />
+          </>
+        )}
+
+        {/* ================= ANALYTICS ================= */}
+        {activeTab === "analytics" && voteAnalytics && (
+          <div className="glass-card mt-6 h-[320px]">
+            <Bar data={chartData} />
+          </div>
+        )}
+
+      </div>
     </div>
   );
 }
 
-/* COMPONENTS */
+/* ================= COMPONENTS ================= */
 
 const Card = ({ title, value, color }) => (
-  <div className="bg-white/10 p-6 rounded-xl">
-    <h3>{title}</h3>
-    <p className={`text-3xl font-bold ${color || ""}`}>{value}</p>
+  <div className="stat-card">
+    <h3 className="text-gray-400 uppercase text-sm tracking-wider">{title}</h3>
+    <p className={`stat-number mt-3 ${color || ""}`}>{value}</p>
   </div>
 );
 
 const TabButton = ({ label, active, onClick }) => (
   <button
     onClick={onClick}
-    className={`px-4 py-2 rounded ${
-      active ? "bg-indigo-600" : "bg-white/10"
+    className={`px-5 py-2 rounded-lg transition ${
+      active
+        ? "bg-gradient-to-r from-cyan-500 to-purple-600"
+        : "bg-white/10 hover:bg-white/20"
     }`}
   >
     {label}
   </button>
 );
 
-const TableWrapper = ({ children }) => (
-  <div className="bg-white/10 rounded-xl overflow-hidden">
+const GlassTable = ({ children }) => (
+  <div className="glass-card overflow-x-auto">
     <table className="w-full text-left">{children}</table>
   </div>
 );
 
+const ActionBtn = ({ children, type, ...props }) => {
+  const styles = {
+    success: "bg-green-600 hover:bg-green-700",
+    danger: "bg-red-600 hover:bg-red-700",
+    warning: "bg-yellow-500 hover:bg-yellow-600",
+    info: "bg-blue-500 hover:bg-blue-600",
+    secondary: "bg-gray-600 hover:bg-gray-700"
+  };
+  return (
+    <button
+      {...props}
+      className={`px-3 py-1 rounded text-sm transition ${styles[type]}`}
+    >
+      {children}
+    </button>
+  );
+};
+
 const Pagination = ({ currentPage, totalPages, setPage }) => {
   if (totalPages <= 1) return null;
   return (
-    <div className="flex justify-center mt-4 space-x-4">
+    <div className="flex justify-center mt-6 gap-4">
       <button
         disabled={currentPage === 1}
         onClick={() => setPage(currentPage - 1)}
-        className="px-3 py-1 bg-white/20 rounded disabled:opacity-40"
+        className="px-4 py-1 bg-white/10 rounded disabled:opacity-40"
       >
         Prev
       </button>
-      <span>Page {currentPage} of {totalPages}</span>
+      <span className="text-gray-400">
+        Page {currentPage} of {totalPages}
+      </span>
       <button
         disabled={currentPage === totalPages}
         onClick={() => setPage(currentPage + 1)}
-        className="px-3 py-1 bg-white/20 rounded disabled:opacity-40"
+        className="px-4 py-1 bg-white/10 rounded disabled:opacity-40"
       >
         Next
       </button>

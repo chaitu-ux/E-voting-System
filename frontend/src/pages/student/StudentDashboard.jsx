@@ -57,80 +57,91 @@ function StudentDashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-white bg-black">
-        Loading...
+      <div className="min-h-screen flex items-center justify-center fade-page">
+        <p className="text-gray-400 text-lg">Loading Dashboard...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-black text-white p-10">
+    <div className="min-h-screen fade-page">
+      <div className="container-modern">
 
-      {/* HEADER */}
-      <div className="flex justify-between items-center mb-10">
-        <h1 className="text-3xl font-bold">
-          Student Dashboard 🎓
-        </h1>
+        {/* HEADER */}
+        <div className="flex flex-col md:flex-row md:justify-between md:items-center mb-12 gap-4">
+          <h1 className="text-3xl font-bold tracking-wide">
+            Student Dashboard 🎓
+          </h1>
 
-        <button
-          onClick={handleLogout}
-          className="bg-gray-700 hover:bg-gray-800 px-4 py-2 rounded"
-        >
-          Logout
-        </button>
-      </div>
-
-      {/* STATUS CARDS */}
-      <div className="grid grid-cols-3 gap-6 mb-10">
-
-        {/* Election Status */}
-        <div className="bg-white/10 p-6 rounded-xl">
-          <h3 className="mb-2 text-lg">Election Status</h3>
-          <p className={`text-2xl font-bold ${electionOpen ? "text-green-400" : "text-red-400"}`}>
-            {electionOpen ? "Open" : "Closed"}
-          </p>
-        </div>
-
-        {/* Application Status */}
-        <div className="bg-white/10 p-6 rounded-xl">
-          <h3 className="mb-2 text-lg">Candidate Application</h3>
-          <p className="text-2xl font-bold">
-            {applicationStatus || "Not Applied"}
-          </p>
-        </div>
-
-        {/* Voting Status */}
-        <div className="bg-white/10 p-6 rounded-xl">
-          <h3 className="mb-2 text-lg">Voting</h3>
-          <p className="text-2xl font-bold">
-            {electionOpen ? "Available" : "Unavailable"}
-          </p>
-        </div>
-
-      </div>
-
-      {/* ACTION BUTTONS */}
-      <div className="flex gap-6">
-
-        {/* Apply Button */}
-        {!applicationStatus && (
           <button
-            onClick={() => navigate("/student/apply")}
-            className="bg-indigo-600 hover:bg-indigo-700 px-6 py-3 rounded-lg"
+            onClick={handleLogout}
+            className="px-5 py-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 transition"
           >
-            Apply as Candidate 🗳
+            Logout
           </button>
-        )}
+        </div>
 
-        {/* Vote Button */}
-        {electionOpen && (
-          <button
-            onClick={() => navigate("/student/vote")}
-            className="bg-green-600 hover:bg-green-700 px-6 py-3 rounded-lg"
-          >
-            Vote Now 🗳
-          </button>
-        )}
+        {/* STATUS CARDS */}
+        <div className="grid md:grid-cols-3 gap-6 mb-12">
+
+          {/* Election Status */}
+          <div className="stat-card">
+            <h3 className="text-gray-400 uppercase text-sm tracking-wider">
+              Election Status
+            </h3>
+            <p className={`stat-number mt-3 ${
+              electionOpen ? "text-green-400" : "text-red-400"
+            }`}>
+              {electionOpen ? "Open" : "Closed"}
+            </p>
+          </div>
+
+          {/* Application Status */}
+          <div className="stat-card">
+            <h3 className="text-gray-400 uppercase text-sm tracking-wider">
+              Candidate Application
+            </h3>
+            <p className="stat-number mt-3 text-purple-400">
+              {applicationStatus || "Not Applied"}
+            </p>
+          </div>
+
+          {/* Voting Status */}
+          <div className="stat-card">
+            <h3 className="text-gray-400 uppercase text-sm tracking-wider">
+              Voting
+            </h3>
+            <p className="stat-number mt-3 text-cyan-400">
+              {electionOpen ? "Available" : "Unavailable"}
+            </p>
+          </div>
+
+        </div>
+
+        {/* ACTION BUTTONS */}
+        <div className="flex flex-col md:flex-row gap-6">
+
+          {/* Apply Button */}
+          {!applicationStatus && (
+            <button
+              onClick={() => navigate("/student/apply")}
+              className="modern-btn"
+            >
+              Apply as Candidate 🗳
+            </button>
+          )}
+
+          {/* Vote Button */}
+          {electionOpen && (
+            <button
+              onClick={() => navigate("/student/vote")}
+              className="modern-btn"
+            >
+              Vote Now 🗳
+            </button>
+          )}
+
+        </div>
 
       </div>
     </div>

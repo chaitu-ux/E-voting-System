@@ -32,7 +32,6 @@ function AdminLogin() {
 
       toast.success("Login successful 🔐");
 
-      // 🎯 Role-based redirect
       setTimeout(() => {
         if (res.data.role === "superadmin") {
           navigate("/superadmin/dashboard");
@@ -51,45 +50,53 @@ function AdminLogin() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-black via-gray-900 to-indigo-900 text-white relative">
+    <div className="min-h-screen flex items-center justify-center relative fade-page">
 
       {/* Back Button */}
       <button
         onClick={() => navigate("/")}
-        className="absolute top-6 left-6 text-gray-300 hover:text-white transition"
+        className="absolute top-6 left-6 text-gray-400 hover:text-white transition"
       >
         ← Back
       </button>
 
-      <div className="bg-white/10 backdrop-blur-lg p-10 rounded-2xl w-[400px] shadow-2xl border border-white/20">
+      <div className="glass-card w-[450px] max-w-[95%]">
 
-        <h1 className="text-2xl font-bold text-center mb-6">
+        <h1 className="text-2xl font-bold text-center mb-3 tracking-wide">
           Admin Login
         </h1>
 
-        <input
-          type="email"
-          placeholder="Admin Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="w-full p-3 mb-4 rounded-lg bg-white/20 placeholder-gray-300 focus:outline-none"
-        />
+        <p className="text-center text-gray-400 mb-8">
+          Secure access to the election management dashboard
+        </p>
 
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="w-full p-3 mb-6 rounded-lg bg-white/20 placeholder-gray-300 focus:outline-none"
-        />
+        <div className="space-y-5">
 
-        <button
-          onClick={handleLogin}
-          disabled={loading}
-          className="w-full p-3 bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-all duration-300 disabled:opacity-50"
-        >
-          {loading ? "Logging in..." : "Login"}
-        </button>
+          <input
+            type="email"
+            placeholder="Admin Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="modern-input"
+          />
+
+          <input
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="modern-input"
+          />
+
+          <button
+            onClick={handleLogin}
+            disabled={loading}
+            className="modern-btn w-full disabled:opacity-50"
+          >
+            {loading ? "Logging in..." : "Login"}
+          </button>
+
+        </div>
 
       </div>
     </div>

@@ -32,7 +32,13 @@ function StudentRegister() {
   const validateForm = () => {
     const { studentId, name, email, department, year } = form;
 
-    if (!studentId.trim() || !name.trim() || !email.trim() || !department.trim() || !year.trim()) {
+    if (
+      !studentId.trim() ||
+      !name.trim() ||
+      !email.trim() ||
+      !department.trim() ||
+      !year.trim()
+    ) {
       toast.error("All fields are required");
       return false;
     }
@@ -56,7 +62,6 @@ function StudentRegister() {
   ========================= */
   const handleRegister = async () => {
     if (loading) return;
-
     if (!validateForm()) return;
 
     try {
@@ -74,7 +79,6 @@ function StudentRegister() {
 
       toast.success(res.data.message || "Registration successful!");
 
-      // Reset form
       setForm({
         studentId: "",
         name: "",
@@ -97,87 +101,85 @@ function StudentRegister() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-900 via-purple-900 to-black text-white">
+    <div className="min-h-screen flex items-center justify-center fade-page">
+      <div className="container-modern flex justify-center">
 
-      <div className="bg-white/10 backdrop-blur-lg p-10 rounded-2xl w-[450px] shadow-2xl border border-white/20">
+        <div className="glass-card w-[500px] max-w-[95%]">
 
-        <h1 className="text-2xl font-bold text-center mb-6">
-          Student Registration 🎓
-        </h1>
+          <h1 className="text-2xl font-bold text-center mb-3 tracking-wide">
+            Student Registration 🎓
+          </h1>
 
-        <input
-          name="studentId"
-          placeholder="Student ID"
-          value={form.studentId}
-          onChange={handleChange}
-          className="input"
-        />
+          <p className="text-center text-gray-400 mb-8">
+            Register to participate in secure blockchain voting.
+          </p>
 
-        <input
-          name="name"
-          placeholder="Full Name"
-          value={form.name}
-          onChange={handleChange}
-          className="input"
-        />
+          <div className="space-y-5">
 
-        <input
-          name="email"
-          type="email"
-          placeholder="Email"
-          value={form.email}
-          onChange={handleChange}
-          className="input"
-        />
+            <input
+              name="studentId"
+              placeholder="Student ID"
+              value={form.studentId}
+              onChange={handleChange}
+              className="modern-input"
+            />
 
-        <input
-          name="department"
-          placeholder="Department"
-          value={form.department}
-          onChange={handleChange}
-          className="input"
-        />
+            <input
+              name="name"
+              placeholder="Full Name"
+              value={form.name}
+              onChange={handleChange}
+              className="modern-input"
+            />
 
-        <input
-          name="year"
-          placeholder="Year (1-4)"
-          value={form.year}
-          onChange={handleChange}
-          className="input"
-        />
+            <input
+              name="email"
+              type="email"
+              placeholder="Email Address"
+              value={form.email}
+              onChange={handleChange}
+              className="modern-input"
+            />
 
-        <button
-          onClick={handleRegister}
-          disabled={loading}
-          className="w-full mt-6 p-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 transition disabled:opacity-50"
-        >
-          {loading ? "Registering..." : "Register"}
-        </button>
+            <input
+              name="department"
+              placeholder="Department"
+              value={form.department}
+              onChange={handleChange}
+              className="modern-input"
+            />
 
-        <p className="text-center mt-4 text-gray-300">
-          Already registered?{" "}
-          <span
-            onClick={() => navigate("/student")}
-            className="text-indigo-400 cursor-pointer hover:underline"
-          >
-            Login here
-          </span>
-        </p>
+            <input
+              name="year"
+              placeholder="Year (1-4)"
+              value={form.year}
+              onChange={handleChange}
+              className="modern-input"
+            />
+
+            <button
+              onClick={handleRegister}
+              disabled={loading}
+              className="modern-btn w-full disabled:opacity-50"
+            >
+              {loading ? "Registering..." : "Register"}
+            </button>
+
+          </div>
+
+          <p className="text-center mt-6 text-gray-400">
+            Already registered?{" "}
+            <span
+              onClick={() => navigate("/student")}
+              className="text-cyan-400 cursor-pointer hover:underline"
+            >
+              Login here
+            </span>
+          </p>
+
+        </div>
 
       </div>
-
-      <style>{`
-        .input {
-          width: 100%;
-          padding: 12px;
-          margin-bottom: 14px;
-          border-radius: 8px;
-          background: rgba(255,255,255,0.15);
-          color: white;
-          outline: none;
-        }
-      `}</style>
-
     </div>
   );
 }

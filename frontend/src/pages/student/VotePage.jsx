@@ -46,9 +46,15 @@ function VotePage() {
     }
   };
 
+  /* 🔐 BLOCKCHAIN TRANSACTION STYLE VOTE */
   const handleVote = async () => {
     if (!electionOpen) return toast.error("Election closed");
     if (!selectedCandidate) return toast.error("Select a candidate");
+
+    // 🔄 Show loading blockchain toast
+    const toastId = toast.loading(
+      "⏳ Transaction Pending...\nWaiting for blockchain confirmation"
+    );
 
     try {
       setLoading(true);
@@ -63,7 +69,11 @@ function VotePage() {
         }
       );
 
-      toast.success("Vote submitted successfully!");
+      // ✅ Update loading toast to success
+      toast.success(
+        "✅ Transaction Confirmed!\nVote recorded securely.",
+        { id: toastId }
+      );
 
       navigate("/student/success", {
         state: {
@@ -73,8 +83,10 @@ function VotePage() {
       });
 
     } catch (error) {
+      // ❌ Update loading toast to error
       toast.error(
-        error.response?.data?.message || "Voting failed"
+        error.response?.data?.message || "Transaction failed",
+        { id: toastId }
       );
     } finally {
       setLoading(false);
@@ -82,54 +94,61 @@ function VotePage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-900 via-purple-900 to-black text-white">
-      <div className="bg-white/10 p-10 rounded-2xl w-[600px]">
+    <div className="min-h-screen flex items-center justify-center fade-page">
+      <div className="container-modern flex justify-center">
 
-        <h1 className="text-3xl font-bold text-center mb-6">
-          Select Your Candidate
-        </h1>
+        <div className="glass-card w-[700px] max-w-[95%]">
 
-        <div className="space-y-4">
-          {candidates.map((candidate) => (
-            <div
-              key={candidate._id}
-              onClick={() => setSelectedCandidate(candidate._id)}
-              className={`p-4 rounded-xl cursor-pointer border transition flex items-center gap-4 ${
-                selectedCandidate === candidate._id
-                  ? "bg-indigo-600 border-indigo-400"
-                  : "bg-white/10 border-transparent"
-              }`}
-            >
-              {/* ✅ Candidate Image */}
-              <img
-                src={`http://localhost:5000${candidate.photo}`}
-                alt={candidate.name}
-                className="w-16 h-16 rounded-full object-cover border"
-              />
+          <h1 className="text-3xl font-bold text-center mb-2 tracking-wide">
+            Select Your Candidate
+          </h1>
 
-              <div>
-                <h2 className="text-lg font-semibold">
-                  {candidate.name}
-                </h2>
-                <p className="text-sm opacity-70">
-                  {candidate.manifesto}
-                </p>
+          <p className="text-center text-gray-400 mb-8">
+            Choose carefully. Your vote will be securely recorded on the blockchain.
+          </p>
+
+          <div className="space-y-5">
+            {candidates.map((candidate) => (
+              <div
+                key={candidate._id}
+                onClick={() => setSelectedCandidate(candidate._id)}
+                className={`p-5 rounded-xl cursor-pointer border transition-all duration-300 flex items-center gap-5 ${
+                  selectedCandidate === candidate._id
+                    ? "border-cyan-400 shadow-lg shadow-cyan-400/30 scale-[1.02]"
+                    : "border-transparent hover:border-white/20 hover:bg-white/5"
+                }`}
+              >
+                <img
+                  src={`http://localhost:5000${candidate.photo}`}
+                  alt={candidate.name}
+                  className="w-20 h-20 rounded-full object-cover border border-white/20"
+                />
+
+                <div>
+                  <h2 className="text-lg font-semibold">
+                    {candidate.name}
+                  </h2>
+                  <p className="text-sm text-gray-400 mt-1">
+                    {candidate.manifesto}
+                  </p>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
 
-        <button
-          onClick={handleVote}
-          disabled={loading}
-          className="w-full mt-8 p-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 transition"
-        >
-          {loading ? (
-            <Oval height={25} width={25} color="#fff" />
-          ) : (
-            "Cast Vote"
-          )}
-        </button>
+          <button
+            onClick={handleVote}
+            disabled={loading}
+            className="modern-btn w-full mt-10 disabled:opacity-50 flex items-center justify-center"
+          >
+            {loading ? (
+              <Oval height={25} width={25} color="#fff" />
+            ) : (
+              "Cast Vote"
+            )}
+          </button>
+
+        </div>
 
       </div>
     </div>

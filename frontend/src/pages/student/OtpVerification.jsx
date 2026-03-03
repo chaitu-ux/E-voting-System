@@ -41,7 +41,6 @@ function OtpVerification() {
       /* =========================
          SAVE TOKEN (IMPORTANT)
       ========================= */
-
       if (res.data.token) {
         localStorage.setItem("studentToken", res.data.token);
       }
@@ -49,7 +48,6 @@ function OtpVerification() {
       /* =========================
          GO TO DASHBOARD
       ========================= */
-
       setTimeout(() => {
         navigate("/student/dashboard");
       }, 800);
@@ -64,28 +62,35 @@ function OtpVerification() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-900 via-purple-900 to-black">
-      <div className="backdrop-blur-lg bg-white/10 border border-white/20 shadow-2xl rounded-2xl p-10 w-[400px] text-white">
+    <div className="min-h-screen flex items-center justify-center fade-page">
 
-        <h1 className="text-3xl font-bold text-center mb-2">
+      <div className="glass-card w-[420px] max-w-[90%] text-center">
+
+        <h1 className="text-3xl font-bold mb-2 tracking-wide">
           OTP Verification
         </h1>
 
-        <input
-          type="text"
-          placeholder="Enter OTP"
-          value={otp}
-          onChange={(e) => setOtp(e.target.value)}
-          className="w-full p-3 rounded-lg bg-white/20 text-white focus:outline-none focus:ring-2 focus:ring-indigo-400 text-center tracking-widest"
-        />
+        <p className="text-gray-400 mb-8">
+          Enter the One-Time Password sent to your registered email
+        </p>
 
-        <button
-          onClick={handleVerifyOtp}
-          disabled={loading}
-          className="w-full mt-6 p-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 transition-all duration-300 shadow-lg disabled:opacity-50"
-        >
-          {loading ? "Verifying..." : "Verify OTP"}
-        </button>
+        <div className="space-y-6">
+          <input
+            type="text"
+            placeholder="Enter OTP"
+            value={otp}
+            onChange={(e) => setOtp(e.target.value)}
+            className="modern-input text-center tracking-[0.4em] text-lg font-semibold"
+          />
+
+          <button
+            onClick={handleVerifyOtp}
+            disabled={loading}
+            className="modern-btn w-full disabled:opacity-50"
+          >
+            {loading ? "Verifying..." : "Verify OTP"}
+          </button>
+        </div>
 
       </div>
     </div>

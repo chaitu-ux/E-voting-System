@@ -13,9 +13,6 @@ function SuperadminDashboard() {
   const [password, setPassword] = useState("");
   const [electionOpen, setElectionOpen] = useState(false);
 
-  /* =========================
-     INITIAL LOAD
-  ========================= */
   useEffect(() => {
     if (!token) {
       navigate("/admin");
@@ -26,23 +23,17 @@ function SuperadminDashboard() {
     fetchElectionStatus();
   }, []);
 
-  /* =========================
-     FETCH ADMINS
-  ========================= */
   const fetchAdmins = async () => {
     try {
       const res = await api.get("/admin/all", {
         headers: { Authorization: `Bearer ${token}` },
       });
       setAdmins(res.data);
-    } catch (error) {
+    } catch {
       toast.error("Failed to load admins");
     }
   };
 
-  /* =========================
-     CREATE ADMIN
-  ========================= */
   const createAdmin = async () => {
     if (!name || !email || !password) {
       return toast.error("All fields required");
@@ -62,14 +53,11 @@ function SuperadminDashboard() {
       setEmail("");
       setPassword("");
       fetchAdmins();
-    } catch (error) {
+    } catch {
       toast.error("Failed to create admin");
     }
   };
 
-  /* =========================
-     DELETE ADMIN
-  ========================= */
   const deleteAdmin = async (id) => {
     try {
       await api.delete(`/admin/delete/${id}`, {
@@ -78,55 +66,42 @@ function SuperadminDashboard() {
 
       toast.success("Admin deleted");
       fetchAdmins();
-    } catch (error) {
+    } catch {
       toast.error("Failed to delete admin");
     }
   };
 
-  /* =========================
-     TRANSFER SUPERADMIN
-  ========================= */
   const transferSuperadmin = async (id) => {
     try {
       await api.patch(
         `/admin/transfer-superadmin/${id}`,
         {},
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
 
       toast.success("Superadmin transferred. Login again.");
       localStorage.clear();
       navigate("/admin");
-    } catch (error) {
+    } catch {
       toast.error("Failed to transfer superadmin");
     }
   };
 
-  /* =========================
-     FETCH ELECTION STATUS
-  ========================= */
   const fetchElectionStatus = async () => {
     try {
       const res = await api.get("/election-status");
       setElectionOpen(res.data?.isOpen || false);
-    } catch (error) {
+    } catch {
       toast.error("Failed to load election status");
     }
   };
 
-  /* =========================
-     TOGGLE ELECTION
-  ========================= */
   const toggleElection = async () => {
     try {
       await api.post(
         "/admin/toggle-election",
         {},
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
 
       fetchElectionStatus();
@@ -138,122 +113,145 @@ function SuperadminDashboard() {
     }
   };
 
-  /* =========================
-     LOGOUT
-  ========================= */
   const handleLogout = () => {
     localStorage.clear();
     navigate("/admin");
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-indigo-900 text-white p-10">
+    <div className="min-h-screen fade-page">
+      <div className="container-modern">
 
-      {/* HEADER */}
-      <div className="flex justify-between items-center mb-10">
-        <h1 className="text-3xl font-bold">
-          Superadmin Dashboard 👑
-        </h1>
+        {/* HEADER */}
+        <div className="flex flex-col md:flex-row md:justify-between md:items-center mb-12 gap-4">
+          <h1 className="text-3xl font-bold tracking-wide">
+            Superadmin Dashboard 👑
+          </h1>
 
-        <div className="flex gap-4">
-          <button
-            onClick={toggleElection}
-            className={`px-5 py-2 rounded font-semibold ${
-              electionOpen
-                ? "bg-red-600 hover:bg-red-700"
-                : "bg-green-600 hover:bg-green-700"
-            }`}
-          >
-            {electionOpen ? "Close Election" : "Open Election"}
-          </button>
+          <div className="flex flex-wrap gap-4">
 
-          <button
-            onClick={handleLogout}
-            className="bg-gray-700 hover:bg-gray-800 px-5 py-2 rounded"
-          >
-            Logout
-          </button>
+            <button
+              onClick={toggleElection}
+              className={`px-6 py-2 rounded-lg font-semibold transition ${
+                electionOpen
+                  ? "bg-red-600 hover:bg-red-700"
+                  : "bg-green-600 hover:bg-green-700"
+              }`}
+            >
+              {electionOpen ? "Close Election" : "Open Election"}
+            </button>
+
+            <button
+              onClick={handleLogout}
+              className="px-6 py-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 transition"
+            >
+              Logout
+            </button>
+
+          </div>
         </div>
-      </div>
 
-      {/* CREATE ADMIN SECTION */}
-      <div className="bg-white/10 p-6 rounded-xl mb-10">
-        <h2 className="text-xl mb-4">Create New Admin</h2>
+        {/* CREATE ADMIN */}
+        <div className="glass-card mb-12">
 
-        <div className="flex gap-4">
-          <input
-            className="p-2 rounded bg-white/20 w-full"
-            placeholder="Name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
+          <h2 className="text-xl font-semibold mb-6 uppercase tracking-wider text-gray-400">
+            Create New Admin
+          </h2>
 
-          <input
-            className="p-2 rounded bg-white/20 w-full"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
+          <div className="grid md:grid-cols-4 gap-4">
 
-          <input
-            type="password"
-            className="p-2 rounded bg-white/20 w-full"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+            <input
+              className="modern-input"
+              placeholder="Name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
 
-          <button
-            onClick={createAdmin}
-            className="bg-green-600 px-5 rounded hover:bg-green-700"
-          >
-            Create
-          </button>
+            <input
+              className="modern-input"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+
+            <input
+              type="password"
+              className="modern-input"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+
+            <button
+              onClick={createAdmin}
+              className="modern-btn"
+            >
+              Create
+            </button>
+
+          </div>
         </div>
-      </div>
 
-      {/* ADMIN TABLE */}
-      <div className="bg-white/10 rounded-xl overflow-hidden">
-        <table className="w-full text-left">
-          <thead className="bg-white/20">
-            <tr>
-              <th className="p-3">Name</th>
-              <th>Email</th>
-              <th>Role</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {admins.map((admin) => (
-              <tr key={admin._id} className="border-t border-white/20">
-                <td className="p-3">{admin.name}</td>
-                <td>{admin.email}</td>
-                <td>{admin.role}</td>
-                <td className="space-x-2">
-                  {admin.role !== "superadmin" && (
-                    <>
-                      <button
-                        onClick={() => transferSuperadmin(admin._id)}
-                        className="bg-yellow-500 px-3 py-1 rounded"
-                      >
-                        Make Superadmin
-                      </button>
+        {/* ADMIN TABLE */}
+        <div className="glass-card overflow-x-auto">
 
-                      <button
-                        onClick={() => deleteAdmin(admin._id)}
-                        className="bg-red-600 px-3 py-1 rounded"
-                      >
-                        Delete
-                      </button>
-                    </>
-                  )}
-                </td>
+          <table className="w-full text-left">
+
+            <thead className="border-b border-white/10">
+              <tr>
+                <th className="p-4">Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
 
+            <tbody>
+              {admins.map((admin) => (
+                <tr key={admin._id} className="border-t border-white/10">
+
+                  <td className="p-4">{admin.name}</td>
+                  <td>{admin.email}</td>
+                  <td>
+                    <span className={`font-semibold ${
+                      admin.role === "superadmin"
+                        ? "text-yellow-400"
+                        : "text-cyan-400"
+                    }`}>
+                      {admin.role}
+                    </span>
+                  </td>
+
+                  <td className="space-x-2">
+
+                    {admin.role !== "superadmin" && (
+                      <>
+                        <button
+                          onClick={() => transferSuperadmin(admin._id)}
+                          className="px-3 py-1 rounded bg-yellow-500 hover:bg-yellow-600 transition text-sm"
+                        >
+                          Make Superadmin
+                        </button>
+
+                        <button
+                          onClick={() => deleteAdmin(admin._id)}
+                          className="px-3 py-1 rounded bg-red-600 hover:bg-red-700 transition text-sm"
+                        >
+                          Delete
+                        </button>
+                      </>
+                    )}
+
+                  </td>
+
+                </tr>
+              ))}
+            </tbody>
+
+          </table>
+        </div>
+
+      </div>
     </div>
   );
 }

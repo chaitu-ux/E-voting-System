@@ -44,7 +44,6 @@ function CandidateApply() {
       setTimeout(() => {
         navigate("/student/dashboard");
       }, 1200);
-
     } catch (error) {
       toast.error(
         error.response?.data?.message || "Application failed"
@@ -55,42 +54,70 @@ function CandidateApply() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-900 via-purple-900 to-black text-white">
+    <div className="min-h-screen flex items-center justify-center fade-page">
+      <div className="container-modern flex justify-center">
 
-      <div className="bg-white/10 backdrop-blur-lg p-10 rounded-2xl w-[500px] shadow-2xl border border-white/20">
+        <div className="glass-card w-[550px] max-w-[95%]">
 
-        <h1 className="text-2xl font-bold text-center mb-6">
-          Apply as Candidate 🗳
-        </h1>
+          <h1 className="text-2xl font-bold text-center mb-3 tracking-wide">
+            Apply as Candidate 🗳
+          </h1>
 
-        <textarea
-          placeholder="Write your manifesto..."
-          value={manifesto}
-          onChange={(e) => setManifesto(e.target.value)}
-          className="w-full p-3 mb-4 rounded bg-white/20 text-white placeholder-gray-300 outline-none resize-none h-32"
-        />
+          <p className="text-center text-gray-400 mb-8">
+            Submit your manifesto and profile photo for approval.
+          </p>
 
-        <input
-          type="file"
-          accept="image/*"
-          onChange={(e) => setPhoto(e.target.files[0])}
-          className="w-full mb-4"
-        />
+          <div className="space-y-6">
 
-        <button
-          onClick={handleApply}
-          disabled={loading}
-          className="w-full p-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 transition disabled:opacity-50"
-        >
-          {loading ? "Submitting..." : "Submit Application"}
-        </button>
+            {/* Manifesto */}
+            <div>
+              <label className="block text-sm text-gray-400 mb-2 uppercase tracking-wider">
+                Manifesto
+              </label>
+              <textarea
+                placeholder="Write your manifesto..."
+                value={manifesto}
+                onChange={(e) => setManifesto(e.target.value)}
+                className="modern-input h-36 resize-none"
+              />
+            </div>
 
-        <button
-          onClick={() => navigate(-1)}
-          className="w-full mt-3 p-2 rounded bg-gray-700 hover:bg-gray-800"
-        >
-          Cancel
-        </button>
+            {/* Photo Upload */}
+            <div>
+              <label className="block text-sm text-gray-400 mb-2 uppercase tracking-wider">
+                Upload Photo
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setPhoto(e.target.files[0])}
+                className="w-full text-sm text-gray-300 file:mr-4 file:py-2 file:px-4 
+                           file:rounded-lg file:border-0 
+                           file:bg-white/10 file:text-white 
+                           hover:file:bg-white/20 transition"
+              />
+            </div>
+
+            {/* Submit Button */}
+            <button
+              onClick={handleApply}
+              disabled={loading}
+              className="modern-btn w-full disabled:opacity-50"
+            >
+              {loading ? "Submitting..." : "Submit Application"}
+            </button>
+
+            {/* Cancel Button */}
+            <button
+              onClick={() => navigate(-1)}
+              className="w-full py-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 transition"
+            >
+              Cancel
+            </button>
+
+          </div>
+
+        </div>
 
       </div>
     </div>

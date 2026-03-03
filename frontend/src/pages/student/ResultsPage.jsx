@@ -26,48 +26,65 @@ function ResultsPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-900 via-purple-900 to-black text-white">
-      <div className="backdrop-blur-lg bg-white/10 border border-white/20 shadow-2xl rounded-2xl p-10 w-[800px]">
+    <div className="min-h-screen flex items-center justify-center fade-page">
+      <div className="container-modern flex justify-center">
 
-        <h1 className="text-3xl font-bold text-center mb-4">
-          {electionTitle}
-        </h1>
+        <div className="glass-card w-[900px] max-w-[95%]">
 
-        <p className="text-center mb-8 text-gray-300">
-          Total Votes: {totalVotes}
-        </p>
+          <h1 className="text-3xl font-bold text-center mb-3 tracking-wide">
+            {electionTitle}
+          </h1>
 
-        {/* 🏆 Winner Section */}
-        {winner && (
-          <div className="bg-yellow-500/20 border border-yellow-400 rounded-xl p-6 mb-8 text-center">
-            <h2 className="text-2xl font-bold mb-2">🏆 Winner</h2>
-            <p className="text-xl font-semibold">{winner.name}</p>
-            <p>{winner.votes} Votes ({winner.percentage}%)</p>
-          </div>
-        )}
+          <p className="text-center text-gray-400 mb-10">
+            Total Votes Cast: <span className="text-cyan-400 font-semibold">{totalVotes}</span>
+          </p>
 
-        {/* 📊 All Candidates */}
-        {results.map((c) => (
-          <div key={c.id} className="mb-6">
-
-            <div className="flex justify-between mb-1">
-              <span>{c.name}</span>
-              <span>{c.percentage}%</span>
+          {/* 🏆 Winner Section */}
+          {winner && (
+            <div className="bg-yellow-400/10 border border-yellow-400/40 rounded-2xl p-8 mb-10 text-center shadow-lg">
+              <h2 className="text-2xl font-bold mb-3 text-yellow-400">
+                🏆 Winner
+              </h2>
+              <p className="text-xl font-semibold text-white">
+                {winner.name}
+              </p>
+              <p className="text-gray-300 mt-2">
+                {winner.votes} Votes ({winner.percentage}%)
+              </p>
             </div>
+          )}
 
-            <div className="w-full bg-white/20 rounded-full h-4">
-              <div
-                className="bg-indigo-500 h-4 rounded-full transition-all duration-1000"
-                style={{ width: `${c.percentage}%` }}
-              />
-            </div>
+          {/* 📊 All Candidates */}
+          <div className="space-y-8">
+            {results.map((c) => (
+              <div key={c.id}>
 
-            <p className="text-sm text-gray-300 mt-1">
-              {c.votes} votes
-            </p>
+                <div className="flex justify-between mb-2">
+                  <span className="font-medium">{c.name}</span>
+                  <span className="text-cyan-400 font-semibold">
+                    {c.percentage}%
+                  </span>
+                </div>
 
+                <div className="w-full bg-white/10 rounded-full h-4 overflow-hidden">
+                  <div
+                    className="h-4 rounded-full transition-all duration-1000"
+                    style={{
+                      width: `${c.percentage}%`,
+                      background: "linear-gradient(90deg, #00D4FF, #7C3AED)"
+                    }}
+                  />
+                </div>
+
+                <p className="text-sm text-gray-400 mt-2">
+                  {c.votes} votes
+                </p>
+
+              </div>
+            ))}
           </div>
-        ))}
+
+        </div>
 
       </div>
     </div>
