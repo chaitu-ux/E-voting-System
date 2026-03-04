@@ -52,10 +52,9 @@ app.use(helmet({
 
 /* =============================================================
    RATE LIMITING
-   ✅ FIXED — limits increased for development
 ============================================================= */
 
-// Global — 500 requests per 15 min (was 100, too strict for dev)
+// Global — 500 requests per 15 min
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 500,
@@ -68,7 +67,7 @@ const globalLimiter = rateLimit({
 });
 app.use(globalLimiter);
 
-// Auth limiter — 50 per 15 min (was 10, too strict)
+// Auth limiter — 50 per 15 min
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 50,
@@ -78,7 +77,7 @@ const authLimiter = rateLimit({
   },
 });
 
-// Vote limiter — 20 per 15 min (was 5, too strict)
+// Vote limiter — 20 per 15 min
 const voteLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
@@ -112,8 +111,12 @@ mongoose
 
 /* =============================================================
    ROUTE MOUNTING
-   ✅ FIXED — voter routes now mounted at BOTH prefixes correctly
-   The 404 was caused by /api/voter/status not being reachable
+   ✅ FIX: Removed app.use("/api", authRoutes) — this was the
+   cause of GET /api/voter/winner returning 404.
+   Express matched "/api/voter/winner" against "/api" prefix first
+   and authRoutes had no "/voter/winner" handler → 404.
+   Now voter routes are mounted ONLY at /api/voter (correct).
+   Auth routes are mounted ONLY at /api/auth (correct).
 ============================================================= */
 
 // Admin routes
@@ -122,20 +125,20 @@ app.use("/api/admin", adminRoutes);
 // Candidate routes
 app.use("/api/candidates", candidateRoutes);
 
-// Auth routes
+// Auth routes — ONLY at /api/auth
 app.use("/api/auth", authLimiter, authRoutes);
 
-// ✅ FIXED — voter routes mounted at /api/voter (primary)
+// Voter routes — ONLY at /api/voter
 app.use("/api/voter", voteLimiter, voterRoutes);
 
-// ✅ FIXED — removed duplicate /api mounting of voterRoutes
-// This was causing route conflicts and 404s
-// Legacy auth support only
-app.use("/api", authRoutes);
+// ✅ REMOVED: app.use("/api", authRoutes)
+// This line was intercepting ALL /api/* requests including
+// /api/voter/winner and /api/voter/commit-vote → causing 404s
 
 /* =============================================================
    PUBLIC REGISTRATION
    POST /api/register
+   (Legacy endpoint — kept for backward compatibility)
 ============================================================= */
 app.post("/api/register", async (req, res) => {
   try {

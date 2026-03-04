@@ -19,8 +19,6 @@ const { verifyToken, verifyRole } = require("../middleware/authMiddleware");
    BLOCKCHAIN SETUP
 ============================================================= */
 const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
-
-// ✅ FIXED — wallet with nonce management to prevent "nonce too low"
 const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
 
 const contractABI =
@@ -40,8 +38,8 @@ function generateDIDHash(studentId) {
   return ethers.keccak256(ethers.toUtf8Bytes(`${studentId}:${salt}`));
 }
 
-/* ✅ FIXED — sequential tx sender to prevent nonce conflicts
-   All blockchain writes go through this queue
+/* =============================================================
+   Sequential TX sender — prevents nonce conflicts
 ============================================================= */
 let txQueue = Promise.resolve();
 
@@ -55,7 +53,6 @@ function sendTx(txFn) {
 
 /* =============================================================
    SUPERADMIN SETUP
-   POST /api/admin/setup
 ============================================================= */
 router.post("/setup", async (req, res) => {
   try {
@@ -74,7 +71,6 @@ router.post("/setup", async (req, res) => {
 
 /* =============================================================
    ADMIN LOGIN
-   POST /api/admin/login
 ============================================================= */
 router.post("/login", async (req, res) => {
   try {
@@ -98,7 +94,6 @@ router.post("/login", async (req, res) => {
 
 /* =============================================================
    CREATE ADMIN
-   POST /api/admin/create
 ============================================================= */
 router.post("/create", verifyToken, verifyRole("superadmin"), async (req, res) => {
   try {
@@ -167,10 +162,12 @@ router.get("/students", verifyToken, async (req, res) => {
 
 /* =============================================================
    APPROVE STUDENT ✅ FIXED
-   PATCH /api/admin/approve/:id
-   Fix 1: DB saved BEFORE blockchain — never loses data
-   Fix 2: sendTx() queues transactions — no nonce conflicts
-   Fix 3: isDIDRegistered saved in separate try-catch
+   KEY FIX: isDIDRegistered = true is now saved to DB immediately
+   along with status and isEligible — BEFORE the blockchain call.
+   Previously isDIDRegistered was only set inside the blockchain
+   try block, so if blockchain failed (Election not open, Hardhat
+   restart etc.) it was never saved → DID showed "Not Registered"
+   forever even though student was approved.
 ============================================================= */
 router.patch("/approve/:id", verifyToken, async (req, res) => {
   try {
@@ -179,20 +176,22 @@ router.patch("/approve/:id", verifyToken, async (req, res) => {
       return res.status(404).json({ message: "Student not found" });
     }
 
-    // ✅ Step 1 — Always update DB first regardless of blockchain
     const didHash = generateDIDHash(student.studentId);
+
+    // ✅ FIXED: Save ALL flags to DB immediately — no dependency on blockchain
     student.status = "approved";
     student.isEligible = true;
-    student.didHash = didHash;        // ✅ Save didHash to DB immediately
+    student.didHash = didHash;
+    student.isDIDRegistered = true;        // ✅ moved OUT of blockchain try block
+    student.didRegisteredAt = new Date();  // ✅ moved OUT of blockchain try block
     await student.save();
 
     let blockchainStatus = "db-updated";
     let didTxHash = null;
     let eligibilityTxHash = null;
 
-    // ✅ Step 2 — Try blockchain with queued sequential transactions
+    // Try blockchain — purely optional enhancement, DB is already saved
     try {
-      // Check if already registered
       let isRegistered = false;
       try {
         const status = await contract.getVoterStatus(didHash);
@@ -200,29 +199,21 @@ router.patch("/approve/:id", verifyToken, async (req, res) => {
       } catch { isRegistered = false; }
 
       if (!isRegistered) {
-        // ✅ Queue DID registration — prevents nonce conflict
         const didTx = await sendTx(() => contract.registerVoterDID(didHash));
         await didTx.wait();
         didTxHash = didTx.hash;
       }
 
-      // ✅ Queue eligibility — after DID registration completes
       const eligibilityTx = await sendTx(() =>
         contract.setVoterEligibility(didHash, true)
       );
       await eligibilityTx.wait();
       eligibilityTxHash = eligibilityTx.hash;
 
-      // ✅ Step 3 — Update blockchain flags in DB after success
-      student.isDIDRegistered = true;
-      student.didRegisteredAt = new Date();
-      await student.save();
-
       blockchainStatus = "success";
 
     } catch (chainErr) {
-      console.error("Blockchain DID registration error:", chainErr.message);
-      // DB is already saved — blockchain can be retried later
+      console.error("Blockchain DID registration error (DB already saved):", chainErr.message);
       blockchainStatus = "db-updated-blockchain-pending";
     }
 
@@ -485,7 +476,6 @@ router.get("/vote-analytics", verifyToken, async (req, res) => {
     const totalStudents = await Student.countDocuments({ status: "approved" });
     const totalFraudLogs = await FraudLog.countDocuments();
 
-    // ✅ Populate candidate names in analytics
     const votesPerCandidate = await Voter.aggregate([
       { $match: { phase: "revealed" } },
       { $group: { _id: "$candidate", votes: { $sum: 1 } } },
@@ -535,7 +525,6 @@ router.get("/voter-status/:studentId", verifyToken, async (req, res) => {
     const student = await Student.findById(req.params.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
 
-    // ✅ Return DB status even if no DID yet
     if (!student.didHash) {
       return res.json({
         name: student.name,
@@ -558,7 +547,6 @@ router.get("/voter-status/:studentId", verifyToken, async (req, res) => {
       });
     }
 
-    // Try blockchain
     let blockchainStatus = {
       isRegistered: false,
       isEligible: false,

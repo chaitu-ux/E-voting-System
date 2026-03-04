@@ -9,13 +9,20 @@ function RoleSelection() {
   const [winner, setWinner] = useState(null);
 
   /* =============================================================
-     FETCH WINNER — uses new /api/voter/winner endpoint
+     FETCH WINNER
+     ✅ FIX: Only show winner card when electionClosed === true.
+     Previously the winner was fetched but never displayed because
+     the election status was still "active" / isOpen was true.
+     The backend now returns electionClosed flag — we gate the
+     winner display on that flag so it only appears after the
+     superadmin closes the election.
   ============================================================= */
   useEffect(() => {
     const fetchWinner = async () => {
       try {
         const res = await axios.get(`${API}/api/voter/winner`);
-        if (res.data?.winner?.name) {
+        // ✅ FIX: Only set winner if election is actually closed
+        if (res.data?.winner?.name && res.data?.electionClosed === true) {
           setWinner(res.data.winner);
         }
       } catch {
@@ -71,20 +78,26 @@ function RoleSelection() {
             ))}
           </div>
 
-          {/* Winner card — shown when election is completed */}
+          {/* ✅ FIX: Winner card — only shown when electionClosed === true */}
           {winner && (
             <div className="p-6 rounded-2xl bg-green-500/10 border
-                            border-green-400/40 shadow-lg
-                            shadow-green-500/20">
+                            border-green-400/40 shadow-lg shadow-green-500/20">
               <h2 className="text-xl font-bold text-green-400 mb-2">
                 🏆 Election Winner
               </h2>
+              {winner.photo && (
+                <img
+                  src={`${API}${winner.photo}`}
+                  alt={winner.name}
+                  className="w-16 h-16 rounded-full object-cover border-2
+                             border-green-400 mb-3"
+                  onError={(e) => { e.target.style.display = "none"; }}
+                />
+              )}
               <p className="text-lg font-semibold">{winner.name}</p>
               <p className="text-sm text-green-300 mt-1">
                 Total Votes: {winner.votes}
               </p>
-
-              {/* View full results link */}
               <button
                 onClick={() => navigate("/student/results")}
                 className="mt-3 text-xs text-cyan-400 hover:underline"
@@ -108,9 +121,7 @@ function RoleSelection() {
                        transition-all duration-300 cursor-pointer group"
           >
             <div className="flex items-center gap-6">
-              <div className="text-5xl group-hover:scale-110 transition">
-                🎓
-              </div>
+              <div className="text-5xl group-hover:scale-110 transition">🎓</div>
               <div>
                 <h2 className="text-2xl font-semibold">Student Portal</h2>
                 <p className="text-gray-400 mt-2">
@@ -118,7 +129,6 @@ function RoleSelection() {
                 </p>
               </div>
             </div>
-
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -141,9 +151,7 @@ function RoleSelection() {
                        transition-all duration-300 cursor-pointer group"
           >
             <div className="flex items-center gap-6">
-              <div className="text-5xl group-hover:scale-110 transition">
-                🔐
-              </div>
+              <div className="text-5xl group-hover:scale-110 transition">🔐</div>
               <div>
                 <h2 className="text-2xl font-semibold">Admin Panel</h2>
                 <p className="text-gray-400 mt-2">
@@ -162,9 +170,7 @@ function RoleSelection() {
                        transition-all duration-300 cursor-pointer group"
           >
             <div className="flex items-center gap-4">
-              <div className="text-3xl group-hover:scale-110 transition">
-                📊
-              </div>
+              <div className="text-3xl group-hover:scale-110 transition">📊</div>
               <div>
                 <h2 className="text-lg font-semibold">View Election Results</h2>
                 <p className="text-gray-400 text-sm mt-1">

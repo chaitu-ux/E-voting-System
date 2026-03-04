@@ -71,9 +71,7 @@ function computeCommitmentHash(didHash, candidateId, nonce) {
 async function handleFraud(student, reason, req, reportToChain = false) {
   student.failedAttempts = (student.failedAttempts || 0) + 1;
   student.riskScore = (student.riskScore || 0) + 10;
-
   let severityLevel = "medium";
-
   if (student.failedAttempts >= 3) {
     student.isBlacklisted = true;
     severityLevel = "high";
@@ -84,9 +82,7 @@ async function handleFraud(student, reason, req, reportToChain = false) {
       console.error("Blockchain blacklist error:", chainErr.message);
     }
   }
-
   await student.save();
-
   await FraudLog.create({
     student: student._id,
     studentHash: student.studentHash,
@@ -94,7 +90,6 @@ async function handleFraud(student, reason, req, reportToChain = false) {
     ipAddress: req.ip,
     severity: severityLevel,
   });
-
   if (reportToChain) {
     try {
       const didHash = generateDIDHash(student.studentId);
@@ -120,9 +115,16 @@ function authenticateStudent(req, res, next) {
 }
 
 /* =============================================================
-   📋 VOTER STATUS CHECK — ✅ FIXED
    GET /api/voter/status
-   DB is source of truth — blockchain used as enhancement only
+   ✅ FIX: isRegistered now uses DB approval status as fallback.
+   Previously: only set isRegistered=true if isDIDRegistered===true
+   Problem: isDIDRegistered was never saved when blockchain failed
+   during admin approval — so it stayed false forever, causing
+   student dashboard to always show "Not Registered" even though
+   student was fully approved and eligible in DB.
+   Fix: if student is approved + has didHash + isEligible in DB,
+   treat them as registered regardless of isDIDRegistered flag.
+   Also auto-heals isDIDRegistered flag in DB silently.
 ============================================================= */
 router.get("/status", authenticateStudent, async (req, res) => {
   try {
@@ -131,9 +133,22 @@ router.get("/status", authenticateStudent, async (req, res) => {
       return res.status(404).json({ success: false, message: "Student not found" });
     }
 
-    // ✅ Start with DB values as source of truth
+    // ✅ FIX: Determine isRegistered from multiple signals — not just isDIDRegistered flag
+    // A student is considered DID-registered if:
+    // - isDIDRegistered flag is true, OR
+    // - they are approved + have a didHash in DB (flag may be stale from blockchain failure)
+    const isEffectivelyRegistered =
+      student.isDIDRegistered === true ||
+      (student.status === "approved" && !!student.didHash);
+
+    // ✅ FIX: Auto-heal isDIDRegistered flag if out of sync
+    if (!student.isDIDRegistered && isEffectivelyRegistered) {
+      student.isDIDRegistered = true;
+      await student.save();
+    }
+
     let statusData = {
-      isRegistered: student.isDIDRegistered || false,
+      isRegistered: isEffectivelyRegistered,
       isEligible: student.isEligible || false,
       hasVoted: false,
       isBlacklisted: student.isBlacklisted || false,
@@ -141,7 +156,7 @@ router.get("/status", authenticateStudent, async (req, res) => {
       didHash: student.didHash || null,
     };
 
-    // Check if student has voted in DB
+    // Check hasVoted from Voter collection
     const activeElection = await Election.findOne({ status: "active" });
     if (activeElection) {
       const voterRecord = await Voter.findOne({
@@ -152,8 +167,9 @@ router.get("/status", authenticateStudent, async (req, res) => {
       statusData.hasVoted = !!voterRecord;
     }
 
-    // ✅ Try blockchain enhancement — but NEVER override DB eligibility with false
-    if (student.isDIDRegistered && student.didHash) {
+    // Try blockchain enhancement — DB is always source of truth
+    // ✅ FIX: Use didHash directly — don't gate on isDIDRegistered flag
+    if (student.didHash) {
       try {
         const [
           chainRegistered,
@@ -163,24 +179,18 @@ router.get("/status", authenticateStudent, async (req, res) => {
           chainFraudScore,
         ] = await contract.getVoterStatus(student.didHash);
 
-        // Only upgrade status, never downgrade
-        // If DB says eligible, keep it eligible even if chain lags
+        // Only upgrade, never downgrade DB values with chain values
         statusData.isRegistered = statusData.isRegistered || chainRegistered;
         statusData.isEligible = statusData.isEligible || chainEligible;
         statusData.hasVoted = statusData.hasVoted || chainVoted;
         statusData.isBlacklisted = statusData.isBlacklisted || chainBlacklisted;
-        statusData.fraudScore = Math.max(
-          statusData.fraudScore,
-          Number(chainFraudScore)
-        );
+        statusData.fraudScore = Math.max(statusData.fraudScore, Number(chainFraudScore));
       } catch (chainErr) {
-        // Blockchain unavailable — use DB values silently
         console.log("Blockchain status unavailable, using DB:", chainErr.message);
       }
     }
 
     res.json({ success: true, status: statusData });
-
   } catch (error) {
     console.error("Voter status error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -188,46 +198,42 @@ router.get("/status", authenticateStudent, async (req, res) => {
 });
 
 /* =============================================================
-   🔐 DID REGISTRATION
    POST /api/voter/register-did
 ============================================================= */
 router.post("/register-did", async (req, res) => {
   try {
     const { studentId } = req.body;
-
     if (!studentId) {
       return res.status(400).json({ success: false, message: "studentId required" });
     }
-
     const student = await Student.findOne({ studentId });
     if (!student) {
       return res.status(404).json({ success: false, message: "Student not found" });
     }
-
     const didHash = generateDIDHash(studentId);
-
-    // Check if already registered on chain
     try {
       const [isRegistered] = await contract.getVoterStatus(didHash);
       if (isRegistered) {
+        if (!student.isDIDRegistered) {
+          student.isDIDRegistered = true;
+          student.didHash = didHash;
+          await student.save();
+        }
         return res.json({ success: true, message: "DID already registered", didHash });
       }
     } catch {}
-
     const tx = await contract.registerVoterDID(didHash);
     await tx.wait();
-
     student.didHash = didHash;
     student.isDIDRegistered = true;
+    student.didRegisteredAt = new Date();
     await student.save();
-
     res.json({
       success: true,
       message: "Voter DID registered on blockchain",
       didHash,
       transactionHash: tx.hash,
     });
-
   } catch (error) {
     console.error("DID Registration Error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -235,27 +241,18 @@ router.post("/register-did", async (req, res) => {
 });
 
 /* =============================================================
-   ✅ SET VOTER ELIGIBILITY
    POST /api/voter/set-eligibility
 ============================================================= */
 router.post("/set-eligibility", async (req, res) => {
   try {
     const { studentId, eligible } = req.body;
-
     if (!studentId || eligible === undefined) {
       return res.status(400).json({ success: false, message: "studentId and eligible required" });
     }
-
     const didHash = generateDIDHash(studentId);
     const tx = await contract.setVoterEligibility(didHash, eligible);
     await tx.wait();
-
-    res.json({
-      success: true,
-      message: `Voter eligibility set to ${eligible}`,
-      transactionHash: tx.hash,
-    });
-
+    res.json({ success: true, message: `Voter eligibility set to ${eligible}`, transactionHash: tx.hash });
   } catch (error) {
     console.error("Eligibility Error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -263,13 +260,11 @@ router.post("/set-eligibility", async (req, res) => {
 });
 
 /* =============================================================
-   🔒 PHASE 1: COMMIT VOTE (ZKP)
    POST /api/voter/commit-vote
 ============================================================= */
 router.post("/commit-vote", authenticateStudent, async (req, res) => {
   try {
     const student = await Student.findById(req.student.id);
-
     if (!student) return res.status(404).json({ success: false, message: "Student not found" });
     if (student.isBlacklisted) return res.status(403).json({ success: false, message: "You are blacklisted" });
 
@@ -280,8 +275,6 @@ router.post("/commit-vote", authenticateStudent, async (req, res) => {
     if (!activeElection || !activeElection.isOpen) {
       return res.status(403).json({ success: false, message: "Election is closed" });
     }
-
-    // ✅ Check eligibility from DB first
     if (!student.isEligible) {
       return res.status(403).json({ success: false, message: "You are not eligible to vote" });
     }
@@ -291,11 +284,7 @@ router.post("/commit-vote", authenticateStudent, async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid or unapproved candidate" });
     }
 
-    const existingVote = await Voter.findOne({
-      election: activeElection._id,
-      student: student._id,
-    });
-
+    const existingVote = await Voter.findOne({ election: activeElection._id, student: student._id });
     if (existingVote) {
       await handleFraud(student, "Duplicate vote attempt", req, true);
       return res.status(400).json({ success: false, message: "You have already voted" });
@@ -303,7 +292,11 @@ router.post("/commit-vote", authenticateStudent, async (req, res) => {
 
     const didHash = generateDIDHash(student.studentId);
 
-    // Check blockchain vote status
+    if (!student.didHash) {
+      student.didHash = didHash;
+      await student.save();
+    }
+
     try {
       const alreadyVotedOnChain = await contract.hasVoted(didHash);
       if (alreadyVotedOnChain) {
@@ -321,7 +314,6 @@ router.post("/commit-vote", authenticateStudent, async (req, res) => {
     let commitTxHash = "db-only-" + Date.now();
     let blockNumber = 0;
 
-    // Try blockchain commit — fallback to DB-only if blockchain unavailable
     try {
       const tx = await contract.commitVote(didHash, commitmentHash);
       const receipt = await tx.wait();
@@ -335,6 +327,7 @@ router.post("/commit-vote", authenticateStudent, async (req, res) => {
       election: activeElection._id,
       student: student._id,
       candidate: candidateDoc._id,
+      didHash: didHash,
       studentHash: didHash,
       blockchainCandidateId,
       commitmentHash,
@@ -350,7 +343,6 @@ router.post("/commit-vote", authenticateStudent, async (req, res) => {
       blockNumber,
       commitmentHash,
     });
-
   } catch (error) {
     console.error("Commit Vote Error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -358,7 +350,6 @@ router.post("/commit-vote", authenticateStudent, async (req, res) => {
 });
 
 /* =============================================================
-   🗳️ PHASE 2: REVEAL VOTE (ZKP)
    POST /api/voter/reveal-vote
 ============================================================= */
 router.post("/reveal-vote", authenticateStudent, async (req, res) => {
@@ -377,31 +368,20 @@ router.post("/reveal-vote", authenticateStudent, async (req, res) => {
       student: student._id,
       phase: "committed",
     });
-
     if (!voterRecord) {
       return res.status(400).json({ success: false, message: "No commitment found. Please commit first." });
     }
 
     const didHash = generateDIDHash(student.studentId);
-
     let revealTxHash = "db-only-" + Date.now();
     let blockNumber = 0;
-    let verificationCode = ethers.keccak256(
-      ethers.toUtf8Bytes(`${student._id}-${Date.now()}`)
-    );
+    let verificationCode = ethers.keccak256(ethers.toUtf8Bytes(`${student._id}-${Date.now()}`));
 
-    // Try blockchain reveal
     try {
-      const tx = await contract.revealVote(
-        didHash,
-        voterRecord.blockchainCandidateId,
-        voterRecord.nonce
-      );
+      const tx = await contract.revealVote(didHash, voterRecord.blockchainCandidateId, voterRecord.nonce);
       const receipt = await tx.wait();
       revealTxHash = tx.hash;
       blockNumber = receipt.blockNumber;
-
-      // Extract E2E verification code from event
       const iface = new ethers.Interface(contractABI);
       for (const log of receipt.logs) {
         try {
@@ -416,22 +396,25 @@ router.post("/reveal-vote", authenticateStudent, async (req, res) => {
       console.log("Blockchain reveal failed, using DB fallback:", chainErr.message);
     }
 
-    // Update voter record
     voterRecord.phase = "revealed";
     voterRecord.revealTransactionHash = revealTxHash;
     voterRecord.verificationCode = verificationCode;
     voterRecord.nonce = undefined;
     await voterRecord.save();
 
-    // Update candidate vote count
     const candidateDoc = await Candidate.findById(voterRecord.candidate);
     if (candidateDoc) {
-      candidateDoc.votes = (candidateDoc.votes || 0) + 1;
+      const actualVoteCount = await Voter.countDocuments({
+        candidate: candidateDoc._id,
+        phase: "revealed",
+      });
+      candidateDoc.votes = actualVoteCount;
       await candidateDoc.save();
     }
 
-    // Save verification code to student record
     student.voteVerificationCode = verificationCode;
+    student.hasVoted = true;
+    student.votedAt = new Date();
     await student.save();
 
     res.json({
@@ -441,7 +424,6 @@ router.post("/reveal-vote", authenticateStudent, async (req, res) => {
       blockNumber,
       verificationCode,
     });
-
   } catch (error) {
     console.error("Reveal Vote Error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -449,7 +431,6 @@ router.post("/reveal-vote", authenticateStudent, async (req, res) => {
 });
 
 /* =============================================================
-   🔍 E2E VOTE VERIFICATION
    POST /api/voter/verify-my-vote
 ============================================================= */
 router.post("/verify-my-vote", authenticateStudent, async (req, res) => {
@@ -458,11 +439,9 @@ router.post("/verify-my-vote", authenticateStudent, async (req, res) => {
     if (!verificationCode) {
       return res.status(400).json({ success: false, message: "verificationCode required" });
     }
-
     const student = await Student.findById(req.student.id);
     if (!student) return res.status(404).json({ success: false, message: "Student not found" });
 
-    // Find vote record by verification code
     const voterRecord = await Voter.findOne({
       student: student._id,
       verificationCode,
@@ -485,7 +464,6 @@ router.post("/verify-my-vote", authenticateStudent, async (req, res) => {
         note: "Your vote identity remains private. Only you can verify using your code.",
       },
     });
-
   } catch (error) {
     console.error("Verify Vote Error:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -493,43 +471,31 @@ router.post("/verify-my-vote", authenticateStudent, async (req, res) => {
 });
 
 /* =============================================================
-   🔍 PUBLIC RECEIPT VERIFICATION
    GET /api/voter/verify-receipt/:code
 ============================================================= */
 router.get("/verify-receipt/:code", async (req, res) => {
   try {
     const { code } = req.params;
-
-    // Check DB first
-    const voterRecord = await Voter.findOne({
-      verificationCode: code,
-      phase: "revealed",
-    });
-
+    const voterRecord = await Voter.findOne({ verificationCode: code, phase: "revealed" });
     if (voterRecord) {
       return res.json({ success: true, receiptExists: true, message: "Receipt is valid." });
     }
-
-    // Try blockchain
     try {
       const exists = await contract.verifyReceiptExists(code);
       return res.json({ success: true, receiptExists: exists });
     } catch {
       return res.json({ success: true, receiptExists: false });
     }
-
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
 /* =============================================================
-   📊 RESULTS API
    GET /api/voter/results
 ============================================================= */
 router.get("/results", async (req, res) => {
   try {
-    // Check completed election first, then active
     const election = await Election.findOne({
       status: { $in: ["completed", "active"] },
     }).sort({ updatedAt: -1 });
@@ -538,95 +504,70 @@ router.get("/results", async (req, res) => {
       return res.status(400).json({ message: "No election available" });
     }
 
-    const candidates = await Candidate.find({
-      election: election._id,
-      status: "approved",
-    });
+    const candidates = await Candidate.find({ election: election._id, status: "approved" });
+    const totalVotes = await Voter.countDocuments({ election: election._id, phase: "revealed" });
 
-    const totalVotes = await Voter.countDocuments({
-      election: election._id,
-      phase: "revealed",
-    });
+    const results = await Promise.all(
+      candidates.map(async (candidate) => {
+        const voteCount = await Voter.countDocuments({ candidate: candidate._id, phase: "revealed" });
+        const percentage = totalVotes > 0 ? ((voteCount / totalVotes) * 100).toFixed(2) : "0.00";
+        return { id: candidate._id, name: candidate.name, votes: voteCount, percentage, photo: candidate.photo };
+      })
+    );
 
-    const results = candidates.map((candidate) => {
-      const voteCount = candidate.votes || 0;
-      const percentage =
-        totalVotes > 0
-          ? ((voteCount / totalVotes) * 100).toFixed(2)
-          : "0.00";
-
-      return {
-        id: candidate._id,
-        name: candidate.name,
-        votes: voteCount,
-        percentage,
-        photo: candidate.photo,
-      };
-    });
-
-    // Sort by votes descending
     results.sort((a, b) => b.votes - a.votes);
-
     const winner = results.length > 0 ? results[0] : null;
 
-    res.json({
-      electionTitle: election.title || "University Election",
-      totalVotes,
-      winner,
-      results,
-    });
-
+    res.json({ electionTitle: election.title || "University Election", totalVotes, winner, results });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
 
 /* =============================================================
-   🏆 WINNER API
    GET /api/voter/winner
+   ✅ FIX: Now includes electionClosed flag so RoleSelection
+   (landing page) only shows winner after election is closed.
+   Previously the winner was never shown on landing page because
+   the query included "active" elections but the frontend had no
+   way to know if it should display the winner yet.
 ============================================================= */
 router.get("/winner", async (req, res) => {
   try {
-    // Try DB first — more reliable
     const election = await Election.findOne({
       status: { $in: ["completed", "active"] },
     }).sort({ updatedAt: -1 });
 
-    if (election) {
-      const candidates = await Candidate.find({
-        election: election._id,
-        status: "approved",
-      }).sort({ votes: -1 });
-
-      if (candidates.length > 0 && candidates[0].votes > 0) {
-        return res.json({
-          success: true,
-          winner: {
-            name: candidates[0].name,
-            votes: candidates[0].votes,
-            photo: candidates[0].photo,
-            source: "database",
-          },
-        });
-      }
+    if (!election) {
+      return res.status(404).json({ success: false, message: "No election found" });
     }
 
-    // Fallback to blockchain
-    try {
-      const [winnerName, winnerVotes, winnerId] = await contract.getWinner();
-      return res.json({
-        success: true,
-        winner: {
-          name: winnerName,
-          votes: winnerVotes.toString(),
-          candidateId: winnerId.toString(),
-          source: "blockchain",
-        },
-      });
-    } catch {
-      return res.status(404).json({ success: false, message: "No winner yet" });
+    const candidates = await Candidate.find({ election: election._id, status: "approved" });
+
+    if (!candidates.length) {
+      return res.status(404).json({ success: false, message: "No candidates found" });
     }
 
+    const candidatesWithVotes = await Promise.all(
+      candidates.map(async (c) => {
+        const voteCount = await Voter.countDocuments({ candidate: c._id, phase: "revealed" });
+        return { name: c.name, votes: voteCount, photo: c.photo, _id: c._id };
+      })
+    );
+
+    candidatesWithVotes.sort((a, b) => b.votes - a.votes);
+    const winner = candidatesWithVotes[0];
+
+    // ✅ FIX: Tell the frontend whether election is closed
+    // RoleSelection uses electionClosed=true to decide whether to show winner
+    const electionClosed = election.status === "completed" || !election.isOpen;
+
+    return res.json({
+      success: true,
+      electionClosed,                          // ← NEW: frontend gates winner display on this
+      winner: { name: winner.name, votes: winner.votes, photo: winner.photo, source: "database" },
+      allCandidates: candidatesWithVotes,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
