@@ -42,26 +42,10 @@ import RoleProtectedRoute from "./components/RoleProtectedRoute";
 /* ===============================
    🎬 PAGE ANIMATION CONFIG
 ================================ */
-
 const pageVariants = {
-  initial: {
-    x: "-100%",
-    scale: 0.95,
-    opacity: 0,
-    filter: "blur(8px)",
-  },
-  animate: {
-    x: 0,
-    scale: 1,
-    opacity: 1,
-    filter: "blur(0px)",
-  },
-  exit: {
-    x: "100%",
-    scale: 0.95,
-    opacity: 0,
-    filter: "blur(8px)",
-  },
+  initial: { x: "-100%", scale: 0.95, opacity: 0, filter: "blur(8px)" },
+  animate: { x: 0, scale: 1, opacity: 1, filter: "blur(0px)" },
+  exit:    { x: "100%", scale: 0.95, opacity: 0, filter: "blur(8px)" },
 };
 
 const pageTransition = {
@@ -73,7 +57,6 @@ const pageTransition = {
 /* ===============================
    🎬 ANIMATED ROUTES WRAPPER
 ================================ */
-
 function AnimatedRoutes() {
   const location = useLocation();
 
@@ -89,19 +72,27 @@ function AnimatedRoutes() {
           transition={pageTransition}
         >
           <Routes location={location}>
-            {/* PUBLIC */}
+
+            {/* ── PUBLIC ── */}
             <Route path="/" element={<RoleSelection />} />
 
-            {/* STUDENT FLOW */}
-            <Route path="/student" element={<StudentLogin />} />
-            <Route path="/student/register" element={<StudentRegister />} />
-            <Route path="/student/otp" element={<OtpVerification />} />
-            <Route path="/student/success" element={<SuccessPage />} />
-            <Route path="/results" element={<ResultsPage />} />
-            <Route path="/student/apply" element={<CandidateApply />} />
-            <Route path="/student/dashboard" element={<StudentDashboard />} />
-            <Route path="/winner" element={<WinnerPage />} />
+            {/* ── STUDENT FLOW ── */}
+            <Route path="/student"                element={<StudentLogin />} />
+            <Route path="/student/register"       element={<StudentRegister />} />
+            <Route path="/student/otp"            element={<OtpVerification />} />
+            <Route path="/student/success"        element={<SuccessPage />} />
+            <Route path="/student/apply"          element={<CandidateApply />} />
+            <Route path="/student/dashboard"      element={<StudentDashboard />} />
 
+            {/* ✅ FIXED — results and winner now under /student/ prefix */}
+            <Route path="/student/results"        element={<ResultsPage />} />
+            <Route path="/student/winner"         element={<WinnerPage />} />
+
+            {/* Legacy routes — keep so old links still work */}
+            <Route path="/results"                element={<ResultsPage />} />
+            <Route path="/winner"                 element={<WinnerPage />} />
+
+            {/* Protected vote route */}
             <Route
               path="/student/vote"
               element={
@@ -111,7 +102,7 @@ function AnimatedRoutes() {
               }
             />
 
-            {/* ADMIN FLOW */}
+            {/* ── ADMIN FLOW ── */}
             <Route path="/admin" element={<AdminLogin />} />
 
             <Route
@@ -132,8 +123,9 @@ function AnimatedRoutes() {
               }
             />
 
-            {/* FALLBACK */}
+            {/* ── FALLBACK ── */}
             <Route path="*" element={<RoleSelection />} />
+
           </Routes>
         </motion.div>
       </AnimatePresence>
@@ -144,66 +136,50 @@ function AnimatedRoutes() {
 /* ===============================
    🚀 MAIN APP
 ================================ */
-
 function App() {
   return (
     <>
-      {/* 🔔 Premium Toast System */}
-<Toaster
-  position="top-right"
-  reverseOrder={false}
-  gutter={14}
-  containerStyle={{
-    top: 20,
-    right: 20,
-  }}
-  toastOptions={{
-    duration: 4500,
-    style: {
-      background:
-        "linear-gradient(135deg, rgba(10,14,39,0.95), rgba(15,52,96,0.95))",
-      color: "#EAEAEA",
-      border: "1px solid rgba(0,212,255,0.25)",
-      backdropFilter: "blur(16px)",
-      borderRadius: "16px",
-      padding: "16px 20px",
-      boxShadow: "0 0 25px rgba(0,212,255,0.2)",
-      fontSize: "14px",
-      fontWeight: "500",
-    },
-    success: {
-      iconTheme: {
-        primary: "#00D4FF",
-        secondary: "#0A0E27",
-      },
-      style: {
-        borderLeft: "4px solid #10B981",
-        boxShadow: "0 0 20px rgba(16,185,129,0.4)",
-      },
-    },
-    error: {
-      iconTheme: {
-        primary: "#EF4444",
-        secondary: "#0A0E27",
-      },
-      style: {
-        borderLeft: "4px solid #EF4444",
-        boxShadow: "0 0 20px rgba(239,68,68,0.4)",
-      },
-    },
-    loading: {
-      iconTheme: {
-        primary: "#00D4FF",
-        secondary: "#0A0E27",
-      },
-      style: {
-        borderLeft: "4px solid #00D4FF",
-        boxShadow: "0 0 20px rgba(0,212,255,0.4)",
-      },
-    },
-  }}
-/>
-      {/* Router */}
+      <Toaster
+        position="top-right"
+        reverseOrder={false}
+        gutter={14}
+        containerStyle={{ top: 20, right: 20 }}
+        toastOptions={{
+          duration: 4500,
+          style: {
+            background: "linear-gradient(135deg, rgba(10,14,39,0.95), rgba(15,52,96,0.95))",
+            color: "#EAEAEA",
+            border: "1px solid rgba(0,212,255,0.25)",
+            backdropFilter: "blur(16px)",
+            borderRadius: "16px",
+            padding: "16px 20px",
+            boxShadow: "0 0 25px rgba(0,212,255,0.2)",
+            fontSize: "14px",
+            fontWeight: "500",
+          },
+          success: {
+            iconTheme: { primary: "#00D4FF", secondary: "#0A0E27" },
+            style: {
+              borderLeft: "4px solid #10B981",
+              boxShadow: "0 0 20px rgba(16,185,129,0.4)",
+            },
+          },
+          error: {
+            iconTheme: { primary: "#EF4444", secondary: "#0A0E27" },
+            style: {
+              borderLeft: "4px solid #EF4444",
+              boxShadow: "0 0 20px rgba(239,68,68,0.4)",
+            },
+          },
+          loading: {
+            iconTheme: { primary: "#00D4FF", secondary: "#0A0E27" },
+            style: {
+              borderLeft: "4px solid #00D4FF",
+              boxShadow: "0 0 20px rgba(0,212,255,0.4)",
+            },
+          },
+        }}
+      />
       <Router>
         <AnimatedRoutes />
       </Router>
