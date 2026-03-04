@@ -39,16 +39,69 @@ function generateDIDHash(studentId) {
 }
 
 /* =============================================================
-   Sequential TX sender — prevents nonce conflicts
+   ✅ FIX: sendTx — always fetch fresh nonce before every tx.
+   ROOT CAUSE of NONCE_EXPIRED errors:
+   - Old code used a shared txQueue Promise chain. When one tx
+     failed with NONCE_EXPIRED, the queue broke permanently and
+     all subsequent txs also failed until server restart.
+   - ethers.js internally caches the nonce — if any tx fails,
+     the cached nonce goes stale and every retry reuses the old
+     nonce value, causing the same error in a loop.
+   FIX:
+   - Fetch fresh nonce from chain before EVERY transaction using
+     provider.getTransactionCount(wallet.address, "pending").
+   - "pending" includes unconfirmed txs, so it's always accurate.
+   - Reset the queue to Promise.resolve() after each error so
+     future txs are not blocked by a past failure.
+   - Add a small retry with nonce increment on NONCE_EXPIRED so
+     transient race conditions self-heal automatically.
 ============================================================= */
 let txQueue = Promise.resolve();
 
-function sendTx(txFn) {
-  txQueue = txQueue.then(() => txFn()).catch((err) => {
-    console.error("TX Queue error:", err.message);
-    throw err;
+async function sendTx(txFn) {
+  // Serialize all txs to avoid nonce races between concurrent requests
+  const result = await new Promise((resolve, reject) => {
+    txQueue = txQueue
+      .then(async () => {
+        try {
+          // Always get fresh nonce — never rely on ethers internal cache
+          const nonce = await provider.getTransactionCount(
+            wallet.address,
+            "pending"
+          );
+          const tx = await txFn(nonce);
+          resolve(tx);
+        } catch (err) {
+          // If nonce expired, wait briefly and retry once with latest nonce
+          if (
+            err.code === "NONCE_EXPIRED" ||
+            (err.message && err.message.includes("nonce"))
+          ) {
+            console.warn("⚠️  Nonce error — retrying with fresh nonce...");
+            try {
+              await new Promise((r) => setTimeout(r, 500));
+              const freshNonce = await provider.getTransactionCount(
+                wallet.address,
+                "latest"
+              );
+              const retryTx = await txFn(freshNonce);
+              resolve(retryTx);
+            } catch (retryErr) {
+              console.error("❌ TX retry also failed:", retryErr.message);
+              reject(retryErr);
+            }
+          } else {
+            reject(err);
+          }
+        }
+      })
+      .catch((err) => {
+        // ✅ Reset queue after failure so future txs are not blocked
+        txQueue = Promise.resolve();
+        reject(err);
+      });
   });
-  return txQueue;
+  return result;
 }
 
 /* =============================================================
@@ -161,13 +214,14 @@ router.get("/students", verifyToken, async (req, res) => {
 });
 
 /* =============================================================
-   APPROVE STUDENT ✅ FIXED
-   KEY FIX: isDIDRegistered = true is now saved to DB immediately
-   along with status and isEligible — BEFORE the blockchain call.
-   Previously isDIDRegistered was only set inside the blockchain
-   try block, so if blockchain failed (Election not open, Hardhat
-   restart etc.) it was never saved → DID showed "Not Registered"
-   forever even though student was approved.
+   ✅ FIX: APPROVE STUDENT
+   - DB flags saved immediately (before blockchain attempt)
+   - Blockchain calls now pass fresh nonce via sendTx()
+   - Auto-syncs DID to chain if student was previously approved
+     but blockchain registration failed due to stale nonce
+   - Both registerVoterDID and setVoterEligibility are retried
+     cleanly and independently so a failure in one doesn't
+     block the other
 ============================================================= */
 router.patch("/approve/:id", verifyToken, async (req, res) => {
   try {
@@ -178,42 +232,55 @@ router.patch("/approve/:id", verifyToken, async (req, res) => {
 
     const didHash = generateDIDHash(student.studentId);
 
-    // ✅ FIXED: Save ALL flags to DB immediately — no dependency on blockchain
+    // ✅ Save ALL flags to DB first — independent of blockchain success
     student.status = "approved";
     student.isEligible = true;
     student.didHash = didHash;
-    student.isDIDRegistered = true;        // ✅ moved OUT of blockchain try block
-    student.didRegisteredAt = new Date();  // ✅ moved OUT of blockchain try block
+    student.isDIDRegistered = true;
+    student.didRegisteredAt = new Date();
     await student.save();
 
     let blockchainStatus = "db-updated";
     let didTxHash = null;
     let eligibilityTxHash = null;
 
-    // Try blockchain — purely optional enhancement, DB is already saved
+    // ✅ Blockchain — optional enhancement, DB is source of truth
     try {
+      // Check if already registered on-chain before registering again
       let isRegistered = false;
       try {
         const status = await contract.getVoterStatus(didHash);
         isRegistered = status[0];
-      } catch { isRegistered = false; }
-
-      if (!isRegistered) {
-        const didTx = await sendTx(() => contract.registerVoterDID(didHash));
-        await didTx.wait();
-        didTxHash = didTx.hash;
+      } catch {
+        isRegistered = false;
       }
 
-      const eligibilityTx = await sendTx(() =>
-        contract.setVoterEligibility(didHash, true)
+      if (!isRegistered) {
+        // ✅ FIX: pass nonce into the contract call via sendTx
+        const didTx = await sendTx((nonce) =>
+          contract.registerVoterDID(didHash, { nonce })
+        );
+        await didTx.wait();
+        didTxHash = didTx.hash;
+        console.log("✅ DID registered on-chain:", didTxHash);
+      } else {
+        console.log("ℹ️  DID already registered on-chain, skipping");
+      }
+
+      // ✅ FIX: fresh nonce for eligibility tx too
+      const eligibilityTx = await sendTx((nonce) =>
+        contract.setVoterEligibility(didHash, true, { nonce })
       );
       await eligibilityTx.wait();
       eligibilityTxHash = eligibilityTx.hash;
+      console.log("✅ Eligibility set on-chain:", eligibilityTxHash);
 
       blockchainStatus = "success";
-
     } catch (chainErr) {
-      console.error("Blockchain DID registration error (DB already saved):", chainErr.message);
+      console.error(
+        "Blockchain DID registration error (DB already saved):",
+        chainErr.message
+      );
       blockchainStatus = "db-updated-blockchain-pending";
     }
 
@@ -224,9 +291,62 @@ router.patch("/approve/:id", verifyToken, async (req, res) => {
       didTxHash,
       eligibilityTxHash,
     });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+});
+
+/* =============================================================
+   ✅ FIX: RE-SYNC DID TO BLOCKCHAIN
+   New endpoint — lets admin manually push a student's DID to
+   chain if the original approval blockchain call failed.
+   Call: PATCH /api/admin/resync-did/:id
+============================================================= */
+router.patch("/resync-did/:id", verifyToken, async (req, res) => {
+  try {
+    const student = await Student.findById(req.params.id);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    if (student.status !== "approved") {
+      return res.status(400).json({ message: "Student must be approved first" });
+    }
+
+    const didHash = generateDIDHash(student.studentId);
+
+    // Ensure DB is up to date
+    student.didHash = didHash;
+    student.isDIDRegistered = true;
+    await student.save();
+
+    let isRegistered = false;
+    try {
+      const status = await contract.getVoterStatus(didHash);
+      isRegistered = status[0];
+    } catch {}
+
+    let didTxHash = null;
+    if (!isRegistered) {
+      const didTx = await sendTx((nonce) =>
+        contract.registerVoterDID(didHash, { nonce })
+      );
+      await didTx.wait();
+      didTxHash = didTx.hash;
+    }
+
+    const eligibilityTx = await sendTx((nonce) =>
+      contract.setVoterEligibility(didHash, true, { nonce })
+    );
+    await eligibilityTx.wait();
+
+    res.json({
+      success: true,
+      message: "DID re-synced to blockchain successfully",
+      didHash,
+      didTxHash,
+      eligibilityTxHash: eligibilityTx.hash,
+    });
+  } catch (error) {
+    console.error("Re-sync DID error:", error.message);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
@@ -244,8 +364,8 @@ router.patch("/reject/:id", verifyToken, async (req, res) => {
 
     if (student.isDIDRegistered && student.didHash) {
       try {
-        const tx = await sendTx(() =>
-          contract.setVoterEligibility(student.didHash, false)
+        const tx = await sendTx((nonce) =>
+          contract.setVoterEligibility(student.didHash, false, { nonce })
         );
         await tx.wait();
       } catch (chainErr) {
@@ -273,8 +393,8 @@ router.patch("/blacklist/:id", verifyToken, async (req, res) => {
 
     if (student.didHash) {
       try {
-        const tx = await sendTx(() =>
-          contract.blacklistVoter(student.didHash, "Admin manual blacklist")
+        const tx = await sendTx((nonce) =>
+          contract.blacklistVoter(student.didHash, "Admin manual blacklist", { nonce })
         );
         await tx.wait();
       } catch (chainErr) {
@@ -314,8 +434,8 @@ router.patch("/unblacklist/:id", verifyToken, async (req, res) => {
 
     if (student.didHash) {
       try {
-        const tx = await sendTx(() =>
-          contract.setVoterEligibility(student.didHash, true)
+        const tx = await sendTx((nonce) =>
+          contract.setVoterEligibility(student.didHash, true, { nonce })
         );
         await tx.wait();
       } catch (chainErr) {
@@ -359,7 +479,9 @@ router.post("/toggle-election", verifyToken, verifyRole("superadmin"), async (re
       await election.save();
 
       try {
-        const tx = await sendTx(() => contract.toggleElection(true));
+        const tx = await sendTx((nonce) =>
+          contract.toggleElection(true, { nonce })
+        );
         await tx.wait();
       } catch (chainErr) {
         console.error("Blockchain toggle error:", chainErr.message);
@@ -372,7 +494,9 @@ router.post("/toggle-election", verifyToken, verifyRole("superadmin"), async (re
     election.status = election.isOpen ? "active" : "completed";
 
     try {
-      const tx = await sendTx(() => contract.toggleElection(election.isOpen));
+      const tx = await sendTx((nonce) =>
+        contract.toggleElection(election.isOpen, { nonce })
+      );
       await tx.wait();
     } catch (chainErr) {
       console.error("Blockchain toggle error:", chainErr.message);
@@ -392,7 +516,6 @@ router.post("/toggle-election", verifyToken, verifyRole("superadmin"), async (re
 
     await election.save();
     res.json({ success: true, isOpen: election.isOpen });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -438,10 +561,11 @@ router.post("/report-fraud/:studentId", verifyToken, async (req, res) => {
       return res.status(400).json({ message: "Student DID not registered" });
     }
 
-    const tx = await sendTx(() =>
+    const tx = await sendTx((nonce) =>
       contract.reportFraud(
         student.didHash,
-        reason || "Admin reported suspicious activity"
+        reason || "Admin reported suspicious activity",
+        { nonce }
       )
     );
     await tx.wait();

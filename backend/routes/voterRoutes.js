@@ -48,6 +48,54 @@ const contract = new ethers.Contract(
 );
 
 /* =============================================================
+   ✅ FIX: sendTx — fetch fresh nonce before every blockchain tx.
+   Same fix as adminRoutes. Never reuse a cached nonce.
+   Retries once on NONCE_EXPIRED with a fresh "latest" nonce.
+============================================================= */
+let txQueue = Promise.resolve();
+
+async function sendTx(txFn) {
+  const result = await new Promise((resolve, reject) => {
+    txQueue = txQueue
+      .then(async () => {
+        try {
+          const nonce = await provider.getTransactionCount(
+            wallet.address,
+            "pending"
+          );
+          const tx = await txFn(nonce);
+          resolve(tx);
+        } catch (err) {
+          if (
+            err.code === "NONCE_EXPIRED" ||
+            (err.message && err.message.includes("nonce"))
+          ) {
+            console.warn("⚠️  Nonce error in voterRoutes — retrying...");
+            try {
+              await new Promise((r) => setTimeout(r, 500));
+              const freshNonce = await provider.getTransactionCount(
+                wallet.address,
+                "latest"
+              );
+              const retryTx = await txFn(freshNonce);
+              resolve(retryTx);
+            } catch (retryErr) {
+              reject(retryErr);
+            }
+          } else {
+            reject(err);
+          }
+        }
+      })
+      .catch((err) => {
+        txQueue = Promise.resolve();
+        reject(err);
+      });
+  });
+  return result;
+}
+
+/* =============================================================
    HELPERS
 ============================================================= */
 function generateDIDHash(studentId) {
@@ -77,7 +125,9 @@ async function handleFraud(student, reason, req, reportToChain = false) {
     severityLevel = "high";
     try {
       const didHash = generateDIDHash(student.studentId);
-      await contract.blacklistVoter(didHash, reason);
+      await sendTx((nonce) =>
+        contract.blacklistVoter(didHash, reason, { nonce })
+      );
     } catch (chainErr) {
       console.error("Blockchain blacklist error:", chainErr.message);
     }
@@ -93,7 +143,9 @@ async function handleFraud(student, reason, req, reportToChain = false) {
   if (reportToChain) {
     try {
       const didHash = generateDIDHash(student.studentId);
-      await contract.reportFraud(didHash, reason);
+      await sendTx((nonce) =>
+        contract.reportFraud(didHash, reason, { nonce })
+      );
     } catch (chainErr) {
       console.error("Blockchain fraud report error:", chainErr.message);
     }
@@ -116,15 +168,6 @@ function authenticateStudent(req, res, next) {
 
 /* =============================================================
    GET /api/voter/status
-   ✅ FIX: isRegistered now uses DB approval status as fallback.
-   Previously: only set isRegistered=true if isDIDRegistered===true
-   Problem: isDIDRegistered was never saved when blockchain failed
-   during admin approval — so it stayed false forever, causing
-   student dashboard to always show "Not Registered" even though
-   student was fully approved and eligible in DB.
-   Fix: if student is approved + has didHash + isEligible in DB,
-   treat them as registered regardless of isDIDRegistered flag.
-   Also auto-heals isDIDRegistered flag in DB silently.
 ============================================================= */
 router.get("/status", authenticateStudent, async (req, res) => {
   try {
@@ -133,15 +176,10 @@ router.get("/status", authenticateStudent, async (req, res) => {
       return res.status(404).json({ success: false, message: "Student not found" });
     }
 
-    // ✅ FIX: Determine isRegistered from multiple signals — not just isDIDRegistered flag
-    // A student is considered DID-registered if:
-    // - isDIDRegistered flag is true, OR
-    // - they are approved + have a didHash in DB (flag may be stale from blockchain failure)
     const isEffectivelyRegistered =
       student.isDIDRegistered === true ||
       (student.status === "approved" && !!student.didHash);
 
-    // ✅ FIX: Auto-heal isDIDRegistered flag if out of sync
     if (!student.isDIDRegistered && isEffectivelyRegistered) {
       student.isDIDRegistered = true;
       await student.save();
@@ -156,7 +194,6 @@ router.get("/status", authenticateStudent, async (req, res) => {
       didHash: student.didHash || null,
     };
 
-    // Check hasVoted from Voter collection
     const activeElection = await Election.findOne({ status: "active" });
     if (activeElection) {
       const voterRecord = await Voter.findOne({
@@ -167,8 +204,6 @@ router.get("/status", authenticateStudent, async (req, res) => {
       statusData.hasVoted = !!voterRecord;
     }
 
-    // Try blockchain enhancement — DB is always source of truth
-    // ✅ FIX: Use didHash directly — don't gate on isDIDRegistered flag
     if (student.didHash) {
       try {
         const [
@@ -179,7 +214,6 @@ router.get("/status", authenticateStudent, async (req, res) => {
           chainFraudScore,
         ] = await contract.getVoterStatus(student.didHash);
 
-        // Only upgrade, never downgrade DB values with chain values
         statusData.isRegistered = statusData.isRegistered || chainRegistered;
         statusData.isEligible = statusData.isEligible || chainEligible;
         statusData.hasVoted = statusData.hasVoted || chainVoted;
@@ -222,12 +256,17 @@ router.post("/register-did", async (req, res) => {
         return res.json({ success: true, message: "DID already registered", didHash });
       }
     } catch {}
-    const tx = await contract.registerVoterDID(didHash);
+
+    const tx = await sendTx((nonce) =>
+      contract.registerVoterDID(didHash, { nonce })
+    );
     await tx.wait();
+
     student.didHash = didHash;
     student.isDIDRegistered = true;
     student.didRegisteredAt = new Date();
     await student.save();
+
     res.json({
       success: true,
       message: "Voter DID registered on blockchain",
@@ -250,7 +289,9 @@ router.post("/set-eligibility", async (req, res) => {
       return res.status(400).json({ success: false, message: "studentId and eligible required" });
     }
     const didHash = generateDIDHash(studentId);
-    const tx = await contract.setVoterEligibility(didHash, eligible);
+    const tx = await sendTx((nonce) =>
+      contract.setVoterEligibility(didHash, eligible, { nonce })
+    );
     await tx.wait();
     res.json({ success: true, message: `Voter eligibility set to ${eligible}`, transactionHash: tx.hash });
   } catch (error) {
@@ -261,6 +302,13 @@ router.post("/set-eligibility", async (req, res) => {
 
 /* =============================================================
    POST /api/voter/commit-vote
+   ✅ FIX: Auto-registers DID on-chain if student is approved in
+   DB but registration failed during admin approval (nonce bug).
+   Root cause: student 2's DID was never on-chain because the
+   admin approval TX failed with NONCE_EXPIRED. The commit-vote
+   then failed with "Voter DID not registered" from the contract.
+   Fix: before committing vote, check if DID is on-chain and if
+   not, register it now using fresh nonce before proceeding.
 ============================================================= */
 router.post("/commit-vote", authenticateStudent, async (req, res) => {
   try {
@@ -297,14 +345,38 @@ router.post("/commit-vote", authenticateStudent, async (req, res) => {
       await student.save();
     }
 
+    // ✅ FIX: Check if DID is registered on-chain — if not, register it now
+    // This handles the case where admin approval blockchain call failed
+    // (student is approved in DB but DID was never pushed to chain)
     try {
+      const [isRegisteredOnChain, isEligibleOnChain] = await contract.getVoterStatus(didHash);
+
+      if (!isRegisteredOnChain) {
+        console.log("⚠️  DID not on-chain for approved student — registering now...");
+        const regTx = await sendTx((nonce) =>
+          contract.registerVoterDID(didHash, { nonce })
+        );
+        await regTx.wait();
+        console.log("✅ DID registered on-chain (auto-heal):", regTx.hash);
+      }
+
+      if (!isEligibleOnChain) {
+        console.log("⚠️  Eligibility not set on-chain — setting now...");
+        const eligTx = await sendTx((nonce) =>
+          contract.setVoterEligibility(didHash, true, { nonce })
+        );
+        await eligTx.wait();
+        console.log("✅ Eligibility set on-chain (auto-heal):", eligTx.hash);
+      }
+
+      // Check for duplicate vote on-chain
       const alreadyVotedOnChain = await contract.hasVoted(didHash);
       if (alreadyVotedOnChain) {
         await handleFraud(student, "Duplicate vote attempt (Blockchain)", req, true);
         return res.status(400).json({ success: false, message: "Already voted on blockchain" });
       }
     } catch (chainErr) {
-      console.log("Blockchain vote check failed, continuing:", chainErr.message);
+      console.log("Blockchain pre-check failed, continuing with DB fallback:", chainErr.message);
     }
 
     const nonce = generateNonce();
@@ -315,7 +387,9 @@ router.post("/commit-vote", authenticateStudent, async (req, res) => {
     let blockNumber = 0;
 
     try {
-      const tx = await contract.commitVote(didHash, commitmentHash);
+      const tx = await sendTx((txNonce) =>
+        contract.commitVote(didHash, commitmentHash, { nonce: txNonce })
+      );
       const receipt = await tx.wait();
       commitTxHash = tx.hash;
       blockNumber = receipt.blockNumber;
@@ -351,6 +425,7 @@ router.post("/commit-vote", authenticateStudent, async (req, res) => {
 
 /* =============================================================
    POST /api/voter/reveal-vote
+   ✅ FIX: Uses sendTx with fresh nonce for reveal transaction
 ============================================================= */
 router.post("/reveal-vote", authenticateStudent, async (req, res) => {
   try {
@@ -378,7 +453,15 @@ router.post("/reveal-vote", authenticateStudent, async (req, res) => {
     let verificationCode = ethers.keccak256(ethers.toUtf8Bytes(`${student._id}-${Date.now()}`));
 
     try {
-      const tx = await contract.revealVote(didHash, voterRecord.blockchainCandidateId, voterRecord.nonce);
+      // ✅ FIX: use sendTx for fresh nonce
+      const tx = await sendTx((nonce) =>
+        contract.revealVote(
+          didHash,
+          voterRecord.blockchainCandidateId,
+          voterRecord.nonce,
+          { nonce }
+        )
+      );
       const receipt = await tx.wait();
       revealTxHash = tx.hash;
       blockNumber = receipt.blockNumber;
@@ -526,11 +609,6 @@ router.get("/results", async (req, res) => {
 
 /* =============================================================
    GET /api/voter/winner
-   ✅ FIX: Now includes electionClosed flag so RoleSelection
-   (landing page) only shows winner after election is closed.
-   Previously the winner was never shown on landing page because
-   the query included "active" elections but the frontend had no
-   way to know if it should display the winner yet.
 ============================================================= */
 router.get("/winner", async (req, res) => {
   try {
@@ -557,14 +635,11 @@ router.get("/winner", async (req, res) => {
 
     candidatesWithVotes.sort((a, b) => b.votes - a.votes);
     const winner = candidatesWithVotes[0];
-
-    // ✅ FIX: Tell the frontend whether election is closed
-    // RoleSelection uses electionClosed=true to decide whether to show winner
     const electionClosed = election.status === "completed" || !election.isOpen;
 
     return res.json({
       success: true,
-      electionClosed,                          // ← NEW: frontend gates winner display on this
+      electionClosed,
       winner: { name: winner.name, votes: winner.votes, photo: winner.photo, source: "database" },
       allCandidates: candidatesWithVotes,
     });
