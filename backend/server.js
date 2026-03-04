@@ -33,7 +33,7 @@ const app = express();
 console.log("🚀 SERVER FILE LOADED");
 
 /* =============================================================
-   CORS — must be before everything else
+   CORS
 ============================================================= */
 app.use(cors({
   origin: "http://localhost:3000",
@@ -43,7 +43,7 @@ app.use(cors({
 }));
 
 /* =============================================================
-   HELMET — fixed to allow cross-origin images
+   HELMET
 ============================================================= */
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
@@ -52,39 +52,44 @@ app.use(helmet({
 
 /* =============================================================
    RATE LIMITING
+   ✅ FIX: /api/voter/status was hitting the voteLimiter (20/15min)
+   which caused 429 Too Many Requests on every page load/refresh
+   because the student dashboard polls this endpoint frequently.
+   FIX: Create a dedicated statusLimiter with a much higher cap
+   (300/15min) so normal dashboard usage never gets blocked.
+   The voteLimiter (20/15min) now only applies to actual vote
+   submission endpoints (commit-vote, reveal-vote) — not status.
 ============================================================= */
 
 // Global — 500 requests per 15 min
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 500,
-  message: {
-    success: false,
-    message: "Too many requests. Please try again later.",
-  },
+  message: { success: false, message: "Too many requests. Please try again later." },
   standardHeaders: true,
   legacyHeaders: false,
 });
 app.use(globalLimiter);
 
-// Auth limiter — 50 per 15 min
+// Auth limiter — 50 per 15 min (login / OTP)
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 50,
-  message: {
-    success: false,
-    message: "Too many login attempts. Please wait.",
-  },
+  message: { success: false, message: "Too many login attempts. Please wait." },
 });
 
-// Vote limiter — 20 per 15 min
+// ✅ NEW: Status limiter — 300 per 15 min (dashboard polling)
+const statusLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  message: { success: false, message: "Too many status requests. Please wait." },
+});
+
+// Vote action limiter — 20 per 15 min (commit/reveal only)
 const voteLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
-  message: {
-    success: false,
-    message: "Too many voting attempts. Please wait.",
-  },
+  message: { success: false, message: "Too many voting attempts. Please wait." },
 });
 
 /* =============================================================
@@ -111,12 +116,9 @@ mongoose
 
 /* =============================================================
    ROUTE MOUNTING
-   ✅ FIX: Removed app.use("/api", authRoutes) — this was the
-   cause of GET /api/voter/winner returning 404.
-   Express matched "/api/voter/winner" against "/api" prefix first
-   and authRoutes had no "/voter/winner" handler → 404.
-   Now voter routes are mounted ONLY at /api/voter (correct).
-   Auth routes are mounted ONLY at /api/auth (correct).
+   ✅ FIX: /api/voter/status uses statusLimiter (300/15min)
+   ✅ FIX: /api/voter/commit-vote and reveal-vote use voteLimiter
+   All other voter routes use no extra limiter beyond global.
 ============================================================= */
 
 // Admin routes
@@ -125,20 +127,22 @@ app.use("/api/admin", adminRoutes);
 // Candidate routes
 app.use("/api/candidates", candidateRoutes);
 
-// Auth routes — ONLY at /api/auth
+// Auth routes — login / OTP / DID verify
 app.use("/api/auth", authLimiter, authRoutes);
 
-// Voter routes — ONLY at /api/voter
-app.use("/api/voter", voteLimiter, voterRoutes);
+// ✅ FIX: voter/status gets its own generous limiter
+app.use("/api/voter/status", statusLimiter);
 
-// ✅ REMOVED: app.use("/api", authRoutes)
-// This line was intercepting ALL /api/* requests including
-// /api/voter/winner and /api/voter/commit-vote → causing 404s
+// ✅ FIX: vote actions get the strict limiter
+app.use("/api/voter/commit-vote", voteLimiter);
+app.use("/api/voter/reveal-vote", voteLimiter);
+
+// All voter routes
+app.use("/api/voter", voterRoutes);
 
 /* =============================================================
    PUBLIC REGISTRATION
    POST /api/register
-   (Legacy endpoint — kept for backward compatibility)
 ============================================================= */
 app.post("/api/register", async (req, res) => {
   try {
@@ -191,7 +195,6 @@ app.post("/api/register", async (req, res) => {
       success: true,
       message: "Registration successful. Waiting for admin approval.",
     });
-
   } catch (error) {
     console.error("Registration Error:", error);
     res.status(500).json({ message: error.message });
@@ -220,8 +223,7 @@ app.get("/api/health", (req, res) => {
     status: "ok",
     server: "University Blockchain E-Voting Backend",
     timestamp: new Date().toISOString(),
-    mongodb:
-      mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    mongodb: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
   });
 });
 
@@ -237,10 +239,7 @@ app.get("/", (req, res) => {
 ============================================================= */
 app.use((err, req, res, next) => {
   console.error("Unhandled Error:", err.message);
-  res.status(500).json({
-    success: false,
-    message: "Internal server error",
-  });
+  res.status(500).json({ success: false, message: "Internal server error" });
 });
 
 /* =============================================================
