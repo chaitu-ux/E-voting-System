@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import api from "../../api";
 import axios from "axios";
 import toast from "react-hot-toast";
@@ -34,6 +34,11 @@ function Dashboard() {
 
   const [voterStatusData, setVoterStatusData] = useState(null);
   const [loadingStatus, setLoadingStatus] = useState(false);
+
+  // ✅ NEW — Merkle state
+  const [merkleData, setMerkleData] = useState(null);
+  const [merkleLoading, setMerkleLoading] = useState(false);
+  const [merkleAnchoring, setMerkleAnchoring] = useState(false);
 
   const rowsPerPage = 5;
 
@@ -87,6 +92,54 @@ function Dashboard() {
       setCandidates(res.data);
     } catch { toast.error("Failed to load candidates"); }
   };
+
+  /* =============================================================
+     ✅ NEW — MERKLE FETCH + RE-ANCHOR
+     fetchMerkleStatus(): calls GET /api/voter/merkle-root
+       Returns: root, onChainRoot, isInSync, totalVotes,
+                onChainAnchorCount, onChainLastAnchorBlock
+     reAnchorMerkle(): calls GET /api/voter/merkle-root?anchor=true
+       Forces a fresh anchorOffChainData() TX on-chain
+  ============================================================= */
+  const fetchMerkleStatus = useCallback(async () => {
+    setMerkleLoading(true);
+    try {
+      const res = await axios.get(`${API}/api/voter/merkle-root`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setMerkleData(res.data);
+    } catch (e) {
+      toast.error("Failed to fetch Merkle status");
+    } finally {
+      setMerkleLoading(false);
+    }
+  }, [token]);
+
+  const reAnchorMerkle = async () => {
+    setMerkleAnchoring(true);
+    const toastId = toast.loading("Anchoring Merkle root on blockchain...");
+    try {
+      const res = await axios.get(`${API}/api/voter/merkle-root?anchor=true`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setMerkleData(res.data);
+      toast.success(
+        `✅ Anchored! TX: ${res.data.reAnchor?.txHash?.slice(0, 18)}...`,
+        { id: toastId }
+      );
+    } catch (e) {
+      toast.error(e.response?.data?.message || "Re-anchor failed", { id: toastId });
+    } finally {
+      setMerkleAnchoring(false);
+    }
+  };
+
+  // Auto-fetch Merkle data when Analytics tab is opened
+  useEffect(() => {
+    if (activeTab === "analytics" && !merkleData) {
+      fetchMerkleStatus();
+    }
+  }, [activeTab, merkleData, fetchMerkleStatus]);
 
   /* =============================================================
      STUDENT ACTIONS
@@ -172,8 +225,6 @@ function Dashboard() {
     }
   };
 
-  // ✅ FIX: viewVoterStatus now shows DB fallback when blockchain unavailable
-  // Previously showed all ❌ No because blockchain state was wiped on Hardhat restart
   const viewVoterStatus = async (id) => {
     setLoadingStatus(true);
     setVoterStatusData(null);
@@ -182,11 +233,7 @@ function Dashboard() {
         `${API}/api/admin/voter-status/${id}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-
       const data = res.data;
-
-      // ✅ FIX: If blockchain is unavailable or shows all false,
-      // but DB has valid data — use DB as source of truth for display
       const blockchainUnavailable =
         !data.blockchainStatus?.isRegistered &&
         !data.blockchainStatus?.isEligible &&
@@ -194,17 +241,15 @@ function Dashboard() {
         data.dbStatus?.isEligible === true;
 
       if (blockchainUnavailable) {
-        // Override blockchain display with DB values + warning
         data.blockchainStatus = {
-          isRegistered: data.dbStatus.isEligible,   // approved = DID registered in DB
+          isRegistered: data.dbStatus.isEligible,
           isEligible: data.dbStatus.isEligible,
           hasVoted: data.blockchainStatus?.hasVoted || false,
           isBlacklisted: data.dbStatus.isBlacklisted,
           fraudScore: data.blockchainStatus?.fraudScore || "0",
-          _chainUnavailable: true, // flag to show warning in UI
+          _chainUnavailable: true,
         };
       }
-
       setVoterStatusData(data);
     } catch {
       toast.error("Failed to fetch blockchain status");
@@ -407,7 +452,7 @@ function Dashboard() {
 
             <Pagination currentPage={studentPage} totalPages={studentTotalPages} setPage={setStudentPage} />
 
-            {/* ✅ FIXED: Blockchain Voter Status Modal */}
+            {/* Blockchain Voter Status Modal */}
             {(voterStatusData || loadingStatus) && (
               <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
                 <div className="glass-card w-[480px] max-w-[95%]">
@@ -420,8 +465,6 @@ function Dashboard() {
                     <p className="text-gray-400 text-center py-4">Loading blockchain data...</p>
                   ) : voterStatusData && (
                     <div className="space-y-3">
-
-                      {/* ✅ FIX: Show warning banner when blockchain is unavailable */}
                       {voterStatusData.blockchainStatus?._chainUnavailable && (
                         <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-3">
                           <p className="text-xs text-yellow-400">
@@ -592,6 +635,8 @@ function Dashboard() {
         {/* ── ANALYTICS TAB ── */}
         {activeTab === "analytics" && (
           <div className="space-y-6">
+
+            {/* Vote Summary Cards */}
             {voteAnalytics && (
               <div className="grid md:grid-cols-3 gap-4">
                 <div className="glass-card text-center">
@@ -608,6 +653,8 @@ function Dashboard() {
                 </div>
               </div>
             )}
+
+            {/* Votes Per Candidate Chart */}
             <div className="glass-card">
               <h3 className="text-sm text-gray-400 uppercase tracking-wider mb-4">Votes Per Candidate</h3>
               <div className="h-[300px]">
@@ -625,6 +672,192 @@ function Dashboard() {
                 />
               </div>
             </div>
+
+            {/* ✅ NEW — MERKLE TREE INTEGRITY PANEL */}
+            <div className="glass-card">
+              {/* Panel Header */}
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                    🌿 Merkle Tree — Vote Integrity Proof
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Every revealed vote is hashed into a Merkle tree anchored on blockchain
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={fetchMerkleStatus}
+                    disabled={merkleLoading}
+                    className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20
+                               text-xs text-gray-300 transition disabled:opacity-40"
+                  >
+                    {merkleLoading ? "Loading..." : "↻ Refresh"}
+                  </button>
+                  <button
+                    onClick={reAnchorMerkle}
+                    disabled={merkleAnchoring || merkleLoading}
+                    className="px-3 py-1.5 rounded-lg bg-cyan-600/80 hover:bg-cyan-600
+                               text-xs text-white transition disabled:opacity-40 font-semibold"
+                  >
+                    {merkleAnchoring ? "Anchoring..." : "⛓️ Re-Anchor"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Loading State */}
+              {merkleLoading && (
+                <div className="text-center py-8 text-gray-400 text-sm">
+                  Computing Merkle tree...
+                </div>
+              )}
+
+              {/* No votes yet */}
+              {!merkleLoading && merkleData && !merkleData.root && (
+                <div className="text-center py-8">
+                  <p className="text-4xl mb-3">🌱</p>
+                  <p className="text-gray-400 text-sm">No votes cast yet</p>
+                  <p className="text-gray-600 text-xs mt-1">
+                    Merkle tree will be built after the first vote is revealed
+                  </p>
+                </div>
+              )}
+
+              {/* Merkle Data Display */}
+              {!merkleLoading && merkleData?.root && (
+                <div className="space-y-4">
+
+                  {/* Integrity Status Banner */}
+                  <div className={`rounded-xl p-4 border flex items-center gap-3
+                    ${merkleData.isInSync
+                      ? "bg-green-500/10 border-green-500/30"
+                      : "bg-yellow-500/10 border-yellow-500/30"}`}>
+                    <span className="text-2xl">
+                      {merkleData.isInSync ? "✅" : "⚠️"}
+                    </span>
+                    <div>
+                      <p className={`text-sm font-bold ${merkleData.isInSync ? "text-green-400" : "text-yellow-400"}`}>
+                        {merkleData.isInSync
+                          ? "Integrity Verified — All votes anchored on blockchain"
+                          : "Out of Sync — Click Re-Anchor to push latest root on-chain"}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {merkleData.totalVotes} vote{merkleData.totalVotes !== 1 ? "s" : ""} in Merkle tree
+                        {merkleData.onChainAnchorCount > 0 && ` · Anchored ${merkleData.onChainAnchorCount} time${merkleData.onChainAnchorCount !== 1 ? "s" : ""}`}
+                        {merkleData.onChainLastAnchorBlock > 0 && ` · Last anchor block #${merkleData.onChainLastAnchorBlock}`}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Root Hash Comparison */}
+                  <div className="grid md:grid-cols-2 gap-3">
+                    {/* Live DB Root */}
+                    <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 font-semibold">
+                          LIVE
+                        </span>
+                        <p className="text-xs text-gray-400 uppercase tracking-wider">
+                          Current DB Root
+                        </p>
+                      </div>
+                      <p className="text-xs font-mono text-cyan-300 break-all leading-relaxed">
+                        {merkleData.root}
+                      </p>
+                      <p className="text-xs text-gray-600 mt-2">
+                        Computed from {merkleData.totalVotes} revealed vote{merkleData.totalVotes !== 1 ? "s" : ""} right now
+                      </p>
+                    </div>
+
+                    {/* On-chain Anchored Root */}
+                    <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-semibold
+                          ${merkleData.isInSync
+                            ? "bg-green-500/20 text-green-400"
+                            : "bg-orange-500/20 text-orange-400"}`}>
+                          ON-CHAIN
+                        </span>
+                        <p className="text-xs text-gray-400 uppercase tracking-wider">
+                          Anchored Root
+                        </p>
+                      </div>
+                      {merkleData.onChainRoot &&
+                       merkleData.onChainRoot !== "0x0000000000000000000000000000000000000000000000000000000000000000" ? (
+                        <p className="text-xs font-mono text-green-300 break-all leading-relaxed">
+                          {merkleData.onChainRoot}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-gray-500 italic mt-1">
+                          Not yet anchored — click Re-Anchor
+                        </p>
+                      )}
+                      {merkleData.onChainLastAnchorBlock > 0 && (
+                        <p className="text-xs text-gray-600 mt-2">
+                          Block #{merkleData.onChainLastAnchorBlock}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Match indicator */}
+                  <div className={`rounded-xl p-3 text-center text-xs font-mono
+                    ${merkleData.isInSync
+                      ? "bg-green-500/10 text-green-400"
+                      : "bg-orange-500/10 text-orange-400"}`}>
+                    {merkleData.isInSync
+                      ? "✅ DB Root == On-chain Root — Data integrity confirmed"
+                      : "⚠️  DB Root ≠ On-chain Root — Anchor needed"}
+                  </div>
+
+                  {/* How it works explanation */}
+                  <div className="bg-white/3 rounded-xl p-4 border border-white/5">
+                    <p className="text-xs text-gray-400 font-semibold mb-2 uppercase tracking-wider">
+                      How Merkle Integrity Works
+                    </p>
+                    <div className="space-y-1.5">
+                      {[
+                        ["🗳️", "Each vote's commitment hash becomes a leaf node in the tree"],
+                        ["🌿", "All leaves are hashed together into a single 32-byte Merkle root"],
+                        ["⛓️", "Root is stored on Ethereum via anchorOffChainData() — immutable proof"],
+                        ["🔍", "Any vote can be independently verified using its Merkle proof"],
+                        ["🔒", "If any vote is tampered with, the root changes and tampering is detected"],
+                      ].map(([icon, text]) => (
+                        <div key={text} className="flex gap-2 items-start">
+                          <span className="text-sm">{icon}</span>
+                          <p className="text-xs text-gray-500">{text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Re-anchor result */}
+                  {merkleData.reAnchor && (
+                    <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-4">
+                      <p className="text-xs text-cyan-400 font-semibold mb-2">
+                        ✅ Re-Anchor Successful
+                      </p>
+                      <div className="space-y-1">
+                        <div className="flex justify-between">
+                          <span className="text-xs text-gray-400">TX Hash</span>
+                          <span className="text-xs font-mono text-cyan-300">
+                            {merkleData.reAnchor.txHash?.slice(0, 20)}...
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-xs text-gray-400">Votes Anchored</span>
+                          <span className="text-xs text-white font-semibold">
+                            {merkleData.reAnchor.totalVotes}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            {/* END MERKLE PANEL */}
+
           </div>
         )}
 
@@ -647,7 +880,9 @@ const TabButton = ({ label, active, onClick }) => (
   <button
     onClick={onClick}
     className={`px-5 py-2 rounded-lg transition text-sm ${
-      active ? "bg-gradient-to-r from-cyan-500 to-purple-600 text-white" : "bg-white/10 hover:bg-white/20 text-gray-300"
+      active
+        ? "bg-gradient-to-r from-cyan-500 to-purple-600 text-white"
+        : "bg-white/10 hover:bg-white/20 text-gray-300"
     }`}
   >
     {label}
@@ -681,9 +916,21 @@ const Pagination = ({ currentPage, totalPages, setPage }) => {
   if (totalPages <= 1) return null;
   return (
     <div className="flex justify-center mt-4 gap-4 items-center">
-      <button disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)} className="px-4 py-1 bg-white/10 rounded text-sm disabled:opacity-40">Prev</button>
+      <button
+        disabled={currentPage === 1}
+        onClick={() => setPage(currentPage - 1)}
+        className="px-4 py-1 bg-white/10 rounded text-sm disabled:opacity-40"
+      >
+        Prev
+      </button>
       <span className="text-gray-400 text-sm">{currentPage} / {totalPages}</span>
-      <button disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)} className="px-4 py-1 bg-white/10 rounded text-sm disabled:opacity-40">Next</button>
+      <button
+        disabled={currentPage === totalPages}
+        onClick={() => setPage(currentPage + 1)}
+        className="px-4 py-1 bg-white/10 rounded text-sm disabled:opacity-40"
+      >
+        Next
+      </button>
     </div>
   );
 };
