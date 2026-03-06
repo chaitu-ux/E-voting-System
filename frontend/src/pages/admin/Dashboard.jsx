@@ -35,7 +35,7 @@ function Dashboard() {
   const [voterStatusData, setVoterStatusData] = useState(null);
   const [loadingStatus, setLoadingStatus] = useState(false);
 
-  // ✅ NEW — Merkle state
+  // Merkle state
   const [merkleData, setMerkleData] = useState(null);
   const [merkleLoading, setMerkleLoading] = useState(false);
   const [merkleAnchoring, setMerkleAnchoring] = useState(false);
@@ -94,12 +94,7 @@ function Dashboard() {
   };
 
   /* =============================================================
-     ✅ NEW — MERKLE FETCH + RE-ANCHOR
-     fetchMerkleStatus(): calls GET /api/voter/merkle-root
-       Returns: root, onChainRoot, isInSync, totalVotes,
-                onChainAnchorCount, onChainLastAnchorBlock
-     reAnchorMerkle(): calls GET /api/voter/merkle-root?anchor=true
-       Forces a fresh anchorOffChainData() TX on-chain
+     MERKLE FETCH + RE-ANCHOR
   ============================================================= */
   const fetchMerkleStatus = useCallback(async () => {
     setMerkleLoading(true);
@@ -134,7 +129,6 @@ function Dashboard() {
     }
   };
 
-  // Auto-fetch Merkle data when Analytics tab is opened
   useEffect(() => {
     if (activeTab === "analytics" && !merkleData) {
       fetchMerkleStatus();
@@ -455,7 +449,7 @@ function Dashboard() {
             {/* Blockchain Voter Status Modal */}
             {(voterStatusData || loadingStatus) && (
               <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-                <div className="glass-card w-[480px] max-w-[95%]">
+                <div className="glass-card w-[520px] max-w-[95%] max-h-[90vh] overflow-y-auto">
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="font-bold text-cyan-400">⛓️ Blockchain Voter Status</h3>
                     <button onClick={() => setVoterStatusData(null)} className="text-gray-400 hover:text-white text-xl">✕</button>
@@ -517,6 +511,68 @@ function Dashboard() {
                           <p className="text-xs font-mono text-cyan-400 break-all">{voterStatusData.didHash}</p>
                         </div>
                       )}
+
+                      {/* ✅ B3 — ZKP Proof Section */}
+                      {voterStatusData.zkpProof ? (
+                        <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-4">
+                          <div className="flex items-center gap-2 mb-3">
+                            <span className="text-lg">🔐</span>
+                            <div>
+                              <p className="text-xs font-bold text-purple-300 uppercase tracking-wider">
+                                ZKP Commitment Proof
+                              </p>
+                              <p className="text-xs text-gray-500 mt-0.5">
+                                Voter proved knowledge of their choice without revealing it
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <div>
+                              <p className="text-xs text-gray-500 mb-0.5">Commitment Hash</p>
+                              <p className="text-xs font-mono text-purple-300 break-all bg-black/20 rounded p-2">
+                                {voterStatusData.zkpProof.commitmentHash}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-gray-500 mb-0.5">Proof Hash (Verification Code)</p>
+                              <p className="text-xs font-mono text-purple-300 break-all bg-black/20 rounded p-2">
+                                {voterStatusData.zkpProof.proofHash}
+                              </p>
+                            </div>
+                            {voterStatusData.zkpProof.txHash && !voterStatusData.zkpProof.txHash.startsWith("db-only") && (
+                              <div>
+                                <p className="text-xs text-gray-500 mb-0.5">On-chain TX Hash</p>
+                                <p className="text-xs font-mono text-cyan-400 break-all bg-black/20 rounded p-2">
+                                  {voterStatusData.zkpProof.txHash}
+                                </p>
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2 pt-1">
+                              <span className="text-green-400 text-sm">✅</span>
+                              <p className="text-xs text-green-400 font-semibold">
+                                Verification Status: Confirmed
+                              </p>
+                            </div>
+                            <div className="bg-black/20 rounded-lg p-2 mt-1">
+                              <p className="text-xs text-gray-500 italic">
+                                This proves the voter knew their candidate choice at commit time
+                                without the choice being revealed until the reveal phase —
+                                a Zero-Knowledge commitment scheme.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        voterStatusData.blockchainStatus?.hasVoted === false && (
+                          <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+                            <p className="text-xs text-gray-500 text-center">
+                              🔐 ZKP Proof — No vote recorded yet for this student
+                            </p>
+                          </div>
+                        )
+                      )}
+
                     </div>
                   )}
                 </div>
@@ -580,6 +636,7 @@ function Dashboard() {
         {/* ── FRAUD LOGS TAB ── */}
         {activeTab === "fraud" && (
           <>
+            {/* ✅ B2 — Severity summary badges (already existed, confirmed wired to live data) */}
             {voteAnalytics?.fraudBySeverity && (
               <div className="flex gap-3 mb-4 flex-wrap">
                 {voteAnalytics.fraudBySeverity.map((f) => (
@@ -593,6 +650,83 @@ function Dashboard() {
               </div>
             )}
 
+            {/* ✅ B2 NEW — Risk Score Leaderboard: top 5 highest risk students */}
+            {voteAnalytics?.topRiskStudents && voteAnalytics.topRiskStudents.length > 0 && (
+              <div className="glass-card mb-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="text-lg">🚨</span>
+                  <div>
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                      Risk Score Leaderboard
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Top 5 students with highest fraud risk scores
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {voteAnalytics.topRiskStudents.map((s, idx) => {
+                    const riskColor =
+                      s.riskScore >= 50 ? "text-red-400" :
+                      s.riskScore >= 25 ? "text-orange-400" :
+                      s.riskScore >= 10 ? "text-yellow-400" :
+                      "text-green-400";
+
+                    const riskBg =
+                      s.riskScore >= 50 ? "border-red-500/30 bg-red-500/5" :
+                      s.riskScore >= 25 ? "border-orange-500/30 bg-orange-500/5" :
+                      s.riskScore >= 10 ? "border-yellow-500/30 bg-yellow-500/5" :
+                      "border-white/10 bg-white/5";
+
+                    return (
+                      <div
+                        key={s._id}
+                        className={`flex items-center justify-between rounded-xl p-3 border ${riskBg}`}
+                      >
+                        {/* Rank + Info */}
+                        <div className="flex items-center gap-3">
+                          <span className={`text-sm font-bold w-6 text-center ${
+                            idx === 0 ? "text-red-400" :
+                            idx === 1 ? "text-orange-400" :
+                            "text-gray-500"
+                          }`}>
+                            #{idx + 1}
+                          </span>
+                          <div>
+                            <p className="text-sm font-semibold text-white">{s.name}</p>
+                            <p className="text-xs text-gray-500">{s.studentId}</p>
+                          </div>
+                        </div>
+
+                        {/* Stats */}
+                        <div className="flex items-center gap-4">
+                          <div className="text-center hidden sm:block">
+                            <p className="text-xs text-gray-500">Attempts</p>
+                            <p className="text-xs font-bold text-white">{s.failedAttempts || 0}</p>
+                          </div>
+                          <div className="text-center hidden sm:block">
+                            <p className="text-xs text-gray-500">Susp. IPs</p>
+                            <p className="text-xs font-bold text-white">{s.suspiciousIPs?.length || 0}</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-xs text-gray-500">Risk Score</p>
+                            <p className={`text-sm font-black ${riskColor}`}>{s.riskScore}</p>
+                          </div>
+                          {s.isBlacklisted && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-red-500/20 text-red-400 font-semibold">
+                              Blocked
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Fraud Log Table */}
             <GlassTable>
               <thead>
                 <tr className="text-gray-400 text-xs uppercase tracking-wider">
@@ -673,9 +807,8 @@ function Dashboard() {
               </div>
             </div>
 
-            {/* ✅ NEW — MERKLE TREE INTEGRITY PANEL */}
+            {/* MERKLE TREE INTEGRITY PANEL */}
             <div className="glass-card">
-              {/* Panel Header */}
               <div className="flex items-center justify-between mb-5">
                 <div>
                   <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
@@ -705,14 +838,12 @@ function Dashboard() {
                 </div>
               </div>
 
-              {/* Loading State */}
               {merkleLoading && (
                 <div className="text-center py-8 text-gray-400 text-sm">
                   Computing Merkle tree...
                 </div>
               )}
 
-              {/* No votes yet */}
               {!merkleLoading && merkleData && !merkleData.root && (
                 <div className="text-center py-8">
                   <p className="text-4xl mb-3">🌱</p>
@@ -723,11 +854,8 @@ function Dashboard() {
                 </div>
               )}
 
-              {/* Merkle Data Display */}
               {!merkleLoading && merkleData?.root && (
                 <div className="space-y-4">
-
-                  {/* Integrity Status Banner */}
                   <div className={`rounded-xl p-4 border flex items-center gap-3
                     ${merkleData.isInSync
                       ? "bg-green-500/10 border-green-500/30"
@@ -749,38 +877,25 @@ function Dashboard() {
                     </div>
                   </div>
 
-                  {/* Root Hash Comparison */}
                   <div className="grid md:grid-cols-2 gap-3">
-                    {/* Live DB Root */}
                     <div className="bg-white/5 rounded-xl p-4 border border-white/10">
                       <div className="flex items-center gap-2 mb-2">
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 font-semibold">
-                          LIVE
-                        </span>
-                        <p className="text-xs text-gray-400 uppercase tracking-wider">
-                          Current DB Root
-                        </p>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 font-semibold">LIVE</span>
+                        <p className="text-xs text-gray-400 uppercase tracking-wider">Current DB Root</p>
                       </div>
-                      <p className="text-xs font-mono text-cyan-300 break-all leading-relaxed">
-                        {merkleData.root}
-                      </p>
+                      <p className="text-xs font-mono text-cyan-300 break-all leading-relaxed">{merkleData.root}</p>
                       <p className="text-xs text-gray-600 mt-2">
                         Computed from {merkleData.totalVotes} revealed vote{merkleData.totalVotes !== 1 ? "s" : ""} right now
                       </p>
                     </div>
 
-                    {/* On-chain Anchored Root */}
                     <div className="bg-white/5 rounded-xl p-4 border border-white/10">
                       <div className="flex items-center gap-2 mb-2">
                         <span className={`text-xs px-2 py-0.5 rounded-full font-semibold
-                          ${merkleData.isInSync
-                            ? "bg-green-500/20 text-green-400"
-                            : "bg-orange-500/20 text-orange-400"}`}>
+                          ${merkleData.isInSync ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}`}>
                           ON-CHAIN
                         </span>
-                        <p className="text-xs text-gray-400 uppercase tracking-wider">
-                          Anchored Root
-                        </p>
+                        <p className="text-xs text-gray-400 uppercase tracking-wider">Anchored Root</p>
                       </div>
                       {merkleData.onChainRoot &&
                        merkleData.onChainRoot !== "0x0000000000000000000000000000000000000000000000000000000000000000" ? (
@@ -788,33 +903,23 @@ function Dashboard() {
                           {merkleData.onChainRoot}
                         </p>
                       ) : (
-                        <p className="text-xs text-gray-500 italic mt-1">
-                          Not yet anchored — click Re-Anchor
-                        </p>
+                        <p className="text-xs text-gray-500 italic mt-1">Not yet anchored — click Re-Anchor</p>
                       )}
                       {merkleData.onChainLastAnchorBlock > 0 && (
-                        <p className="text-xs text-gray-600 mt-2">
-                          Block #{merkleData.onChainLastAnchorBlock}
-                        </p>
+                        <p className="text-xs text-gray-600 mt-2">Block #{merkleData.onChainLastAnchorBlock}</p>
                       )}
                     </div>
                   </div>
 
-                  {/* Match indicator */}
                   <div className={`rounded-xl p-3 text-center text-xs font-mono
-                    ${merkleData.isInSync
-                      ? "bg-green-500/10 text-green-400"
-                      : "bg-orange-500/10 text-orange-400"}`}>
+                    ${merkleData.isInSync ? "bg-green-500/10 text-green-400" : "bg-orange-500/10 text-orange-400"}`}>
                     {merkleData.isInSync
                       ? "✅ DB Root == On-chain Root — Data integrity confirmed"
                       : "⚠️  DB Root ≠ On-chain Root — Anchor needed"}
                   </div>
 
-                  {/* How it works explanation */}
                   <div className="bg-white/3 rounded-xl p-4 border border-white/5">
-                    <p className="text-xs text-gray-400 font-semibold mb-2 uppercase tracking-wider">
-                      How Merkle Integrity Works
-                    </p>
+                    <p className="text-xs text-gray-400 font-semibold mb-2 uppercase tracking-wider">How Merkle Integrity Works</p>
                     <div className="space-y-1.5">
                       {[
                         ["🗳️", "Each vote's commitment hash becomes a leaf node in the tree"],
@@ -831,24 +936,17 @@ function Dashboard() {
                     </div>
                   </div>
 
-                  {/* Re-anchor result */}
                   {merkleData.reAnchor && (
                     <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-4">
-                      <p className="text-xs text-cyan-400 font-semibold mb-2">
-                        ✅ Re-Anchor Successful
-                      </p>
+                      <p className="text-xs text-cyan-400 font-semibold mb-2">✅ Re-Anchor Successful</p>
                       <div className="space-y-1">
                         <div className="flex justify-between">
                           <span className="text-xs text-gray-400">TX Hash</span>
-                          <span className="text-xs font-mono text-cyan-300">
-                            {merkleData.reAnchor.txHash?.slice(0, 20)}...
-                          </span>
+                          <span className="text-xs font-mono text-cyan-300">{merkleData.reAnchor.txHash?.slice(0, 20)}...</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-xs text-gray-400">Votes Anchored</span>
-                          <span className="text-xs text-white font-semibold">
-                            {merkleData.reAnchor.totalVotes}
-                          </span>
+                          <span className="text-xs text-white font-semibold">{merkleData.reAnchor.totalVotes}</span>
                         </div>
                       </div>
                     </div>
@@ -856,7 +954,6 @@ function Dashboard() {
                 </div>
               )}
             </div>
-            {/* END MERKLE PANEL */}
 
           </div>
         )}

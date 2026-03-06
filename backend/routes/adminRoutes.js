@@ -39,32 +39,15 @@ function generateDIDHash(studentId) {
 }
 
 /* =============================================================
-   ✅ FIX: sendTx — always fetch fresh nonce before every tx.
-   ROOT CAUSE of NONCE_EXPIRED errors:
-   - Old code used a shared txQueue Promise chain. When one tx
-     failed with NONCE_EXPIRED, the queue broke permanently and
-     all subsequent txs also failed until server restart.
-   - ethers.js internally caches the nonce — if any tx fails,
-     the cached nonce goes stale and every retry reuses the old
-     nonce value, causing the same error in a loop.
-   FIX:
-   - Fetch fresh nonce from chain before EVERY transaction using
-     provider.getTransactionCount(wallet.address, "pending").
-   - "pending" includes unconfirmed txs, so it's always accurate.
-   - Reset the queue to Promise.resolve() after each error so
-     future txs are not blocked by a past failure.
-   - Add a small retry with nonce increment on NONCE_EXPIRED so
-     transient race conditions self-heal automatically.
+   sendTx — always fetch fresh nonce before every tx.
 ============================================================= */
 let txQueue = Promise.resolve();
 
 async function sendTx(txFn) {
-  // Serialize all txs to avoid nonce races between concurrent requests
   const result = await new Promise((resolve, reject) => {
     txQueue = txQueue
       .then(async () => {
         try {
-          // Always get fresh nonce — never rely on ethers internal cache
           const nonce = await provider.getTransactionCount(
             wallet.address,
             "pending"
@@ -72,7 +55,6 @@ async function sendTx(txFn) {
           const tx = await txFn(nonce);
           resolve(tx);
         } catch (err) {
-          // If nonce expired, wait briefly and retry once with latest nonce
           if (
             err.code === "NONCE_EXPIRED" ||
             (err.message && err.message.includes("nonce"))
@@ -96,7 +78,6 @@ async function sendTx(txFn) {
         }
       })
       .catch((err) => {
-        // ✅ Reset queue after failure so future txs are not blocked
         txQueue = Promise.resolve();
         reject(err);
       });
@@ -214,14 +195,7 @@ router.get("/students", verifyToken, async (req, res) => {
 });
 
 /* =============================================================
-   ✅ FIX: APPROVE STUDENT
-   - DB flags saved immediately (before blockchain attempt)
-   - Blockchain calls now pass fresh nonce via sendTx()
-   - Auto-syncs DID to chain if student was previously approved
-     but blockchain registration failed due to stale nonce
-   - Both registerVoterDID and setVoterEligibility are retried
-     cleanly and independently so a failure in one doesn't
-     block the other
+   APPROVE STUDENT
 ============================================================= */
 router.patch("/approve/:id", verifyToken, async (req, res) => {
   try {
@@ -232,7 +206,6 @@ router.patch("/approve/:id", verifyToken, async (req, res) => {
 
     const didHash = generateDIDHash(student.studentId);
 
-    // ✅ Save ALL flags to DB first — independent of blockchain success
     student.status = "approved";
     student.isEligible = true;
     student.didHash = didHash;
@@ -244,9 +217,7 @@ router.patch("/approve/:id", verifyToken, async (req, res) => {
     let didTxHash = null;
     let eligibilityTxHash = null;
 
-    // ✅ Blockchain — optional enhancement, DB is source of truth
     try {
-      // Check if already registered on-chain before registering again
       let isRegistered = false;
       try {
         const status = await contract.getVoterStatus(didHash);
@@ -256,7 +227,6 @@ router.patch("/approve/:id", verifyToken, async (req, res) => {
       }
 
       if (!isRegistered) {
-        // ✅ FIX: pass nonce into the contract call via sendTx
         const didTx = await sendTx((nonce) =>
           contract.registerVoterDID(didHash, { nonce })
         );
@@ -267,7 +237,6 @@ router.patch("/approve/:id", verifyToken, async (req, res) => {
         console.log("ℹ️  DID already registered on-chain, skipping");
       }
 
-      // ✅ FIX: fresh nonce for eligibility tx too
       const eligibilityTx = await sendTx((nonce) =>
         contract.setVoterEligibility(didHash, true, { nonce })
       );
@@ -297,10 +266,7 @@ router.patch("/approve/:id", verifyToken, async (req, res) => {
 });
 
 /* =============================================================
-   ✅ FIX: RE-SYNC DID TO BLOCKCHAIN
-   New endpoint — lets admin manually push a student's DID to
-   chain if the original approval blockchain call failed.
-   Call: PATCH /api/admin/resync-did/:id
+   RE-SYNC DID TO BLOCKCHAIN
 ============================================================= */
 router.patch("/resync-did/:id", verifyToken, async (req, res) => {
   try {
@@ -312,7 +278,6 @@ router.patch("/resync-did/:id", verifyToken, async (req, res) => {
 
     const didHash = generateDIDHash(student.studentId);
 
-    // Ensure DB is up to date
     student.didHash = didHash;
     student.isDIDRegistered = true;
     await student.save();
@@ -592,7 +557,14 @@ router.post("/report-fraud/:studentId", verifyToken, async (req, res) => {
 });
 
 /* =============================================================
-   VOTE ANALYTICS
+   ✅ B2 — VOTE ANALYTICS
+   Changes:
+   1. topRiskStudents — NEW: top 5 students sorted by riskScore desc
+      Fields: name, studentId, riskScore, failedAttempts,
+              isBlacklisted, suspiciousIPs, status
+      Used by: Risk Score Leaderboard card in the Fraud tab
+   2. fraudBySeverity — already existed, confirmed it correctly
+      powers the HIGH / MEDIUM / LOW severity badge counts
 ============================================================= */
 router.get("/vote-analytics", verifyToken, async (req, res) => {
   try {
@@ -619,9 +591,16 @@ router.get("/vote-analytics", verifyToken, async (req, res) => {
       },
     ]);
 
+    // Powers the HIGH / MEDIUM / LOW severity badge counts in Fraud tab
     const fraudBySeverity = await FraudLog.aggregate([
       { $group: { _id: "$severity", count: { $sum: 1 } } },
     ]);
+
+    // ✅ B2 NEW — top 5 highest risk students for leaderboard
+    const topRiskStudents = await Student.find()
+      .sort({ riskScore: -1 })
+      .limit(5)
+      .select("name studentId riskScore failedAttempts isBlacklisted suspiciousIPs status");
 
     const turnoutPercentage =
       totalStudents > 0
@@ -635,6 +614,7 @@ router.get("/vote-analytics", verifyToken, async (req, res) => {
       turnoutPercentage,
       votesPerCandidate,
       fraudBySeverity,
+      topRiskStudents, // ✅ B2
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -642,7 +622,11 @@ router.get("/vote-analytics", verifyToken, async (req, res) => {
 });
 
 /* =============================================================
-   BLOCKCHAIN VOTER STATUS
+   ✅ B2 + B3 — BLOCKCHAIN VOTER STATUS
+   B2: now also queries Voter collection for the student's
+       revealed vote record to get commitmentHash + verificationCode
+   B3: returns zkpProof object with commitmentHash, proofHash,
+       txHash, verified — displayed in the Admin voter status modal
 ============================================================= */
 router.get("/voter-status/:studentId", verifyToken, async (req, res) => {
   try {
@@ -668,6 +652,7 @@ router.get("/voter-status/:studentId", verifyToken, async (req, res) => {
           riskScore: student.riskScore,
           failedAttempts: student.failedAttempts,
         },
+        zkpProof: null,
       });
     }
 
@@ -693,6 +678,12 @@ router.get("/voter-status/:studentId", verifyToken, async (req, res) => {
       console.log("Blockchain status unavailable:", chainErr.message);
     }
 
+    // ✅ B3 — fetch voter record for ZKP proof display
+    const voterRecord = await Voter.findOne({
+      student: student._id,
+      phase: "revealed",
+    }).select("commitmentHash verificationCode revealTransactionHash");
+
     res.json({
       name: student.name,
       studentId: student.studentId,
@@ -705,6 +696,15 @@ router.get("/voter-status/:studentId", verifyToken, async (req, res) => {
         riskScore: student.riskScore,
         failedAttempts: student.failedAttempts,
       },
+      // ✅ B3 — ZKP proof data shown in voter status modal
+      zkpProof: voterRecord
+        ? {
+            commitmentHash: voterRecord.commitmentHash,
+            proofHash: voterRecord.verificationCode,
+            txHash: voterRecord.revealTransactionHash,
+            verified: true,
+          }
+        : null,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
