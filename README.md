@@ -1,4 +1,4 @@
-# 🗳️ University Blockchain E-Voting System
+# 🗳️ University Blockchain E-Voting System (Updated: December 2024)
 
 A decentralized electronic voting system built for university student elections using **Blockchain technology**, **React**, **Node.js**, and **MongoDB**. The system ensures transparency, security, and tamper-proof voting through Ethereum smart contracts with advanced privacy features.
 
@@ -233,7 +233,7 @@ E-votingSystem/
 │   │   ├── authMiddleware.js
 │   │   ├── studentAuthMiddleware.js
 │   │   └── uploadMiddleware.js
-│   ├── uploads/             # File uploads
+├── uploads/             # File uploads (with candidate images like 1771953713248-download.jpg)
 │   │   └── candidates/      # Candidate images
 │   ├── server.js            # Main server file
 │   └── package.json
@@ -557,6 +557,11 @@ Frontend runs on `http://localhost:3000`
 4. **Duplicate Index Warnings**
    - Removed duplicate unique indexes in Mongoose schemas
    - Fields with `unique: true` already create indexes
+
+5. **Recent Completions (2024)**:
+   - Finalized voterRoutes.js (commit/reveal voting endpoints)
+   - Enhanced VotePage.jsx and Admin Dashboard.jsx integrations
+   - Full end-to-end voting flow operational
 
 ---
 
