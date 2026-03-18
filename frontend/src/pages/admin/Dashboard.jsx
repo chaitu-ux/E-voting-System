@@ -40,6 +40,10 @@ function Dashboard() {
   const [merkleLoading, setMerkleLoading] = useState(false);
   const [merkleAnchoring, setMerkleAnchoring] = useState(false);
 
+  // ✅ SIDECHAIN — checkpoint ledger state
+  const [sidechainData, setSidechainData] = useState(null);
+  const [sidechainLoading, setSidechainLoading] = useState(false);
+
   const rowsPerPage = 5;
 
   useEffect(() => {
@@ -122,6 +126,9 @@ function Dashboard() {
         `✅ Anchored! TX: ${res.data.reAnchor?.txHash?.slice(0, 18)}...`,
         { id: toastId }
       );
+      // ✅ SIDECHAIN — refresh checkpoint ledger after manual re-anchor
+      setSidechainData(null);
+      fetchSidechainCheckpoints();
     } catch (e) {
       toast.error(e.response?.data?.message || "Re-anchor failed", { id: toastId });
     } finally {
@@ -129,11 +136,33 @@ function Dashboard() {
     }
   };
 
-  useEffect(() => {
-    if (activeTab === "analytics" && !merkleData) {
-      fetchMerkleStatus();
+  /* =============================================================
+     ✅ SIDECHAIN — fetch checkpoint ledger
+     GET /api/voter/sidechain-checkpoints
+     Returns permanent log of every state commit from our private
+     Hardhat chain to Ethereum — the sidechain checkpoint ledger.
+  ============================================================= */
+  const fetchSidechainCheckpoints = useCallback(async () => {
+    setSidechainLoading(true);
+    try {
+      const res = await axios.get(`${API}/api/voter/sidechain-checkpoints`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setSidechainData(res.data);
+    } catch (e) {
+      toast.error("Failed to fetch sidechain checkpoints");
+    } finally {
+      setSidechainLoading(false);
     }
-  }, [activeTab, merkleData, fetchMerkleStatus]);
+  }, [token]);
+
+  // Auto-fetch Merkle + Sidechain when Analytics tab opens
+  useEffect(() => {
+    if (activeTab === "analytics") {
+      if (!merkleData) fetchMerkleStatus();
+      if (!sidechainData) fetchSidechainCheckpoints();
+    }
+  }, [activeTab, merkleData, fetchMerkleStatus, sidechainData, fetchSidechainCheckpoints]);
 
   /* =============================================================
      STUDENT ACTIONS
@@ -954,6 +983,158 @@ function Dashboard() {
                 </div>
               )}
             </div>
+
+            {/* ✅ SIDECHAIN CHECKPOINTS PANEL
+                Implements "Sidechain concepts" claim from the abstract (Pillar 5).
+                Every anchorMerkleRoot() call saves a SidechainCheckpoint record —
+                forming a permanent ledger of state commits from our private Hardhat
+                chain to Ethereum. Same pattern as Polygon PoS checkpoints:
+                private chain processes transactions → commits state root to Ethereum.
+            */}
+            <div className="glass-card">
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                    ⛓️ Sidechain Checkpoint Ledger
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Each entry = one state root committed from the private chain to Ethereum
+                    — inspired by Polygon PoS checkpoint architecture
+                  </p>
+                </div>
+                <button
+                  onClick={() => { setSidechainData(null); fetchSidechainCheckpoints(); }}
+                  disabled={sidechainLoading}
+                  className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20
+                             text-xs text-gray-300 transition disabled:opacity-40"
+                >
+                  {sidechainLoading ? "Loading..." : "↻ Refresh"}
+                </button>
+              </div>
+
+              {sidechainLoading && (
+                <div className="text-center py-8 text-gray-400 text-sm">
+                  Loading checkpoint ledger...
+                </div>
+              )}
+
+              {!sidechainLoading && sidechainData && (
+                <div className="space-y-4">
+
+                  {/* Summary stats */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-white/5 rounded-xl p-3 text-center border border-white/10">
+                      <p className="text-xs text-gray-500 mb-1">Total Checkpoints</p>
+                      <p className="text-2xl font-bold text-cyan-400">
+                        {sidechainData.totalCheckpoints}
+                      </p>
+                    </div>
+                    <div className="bg-white/5 rounded-xl p-3 text-center border border-white/10">
+                      <p className="text-xs text-gray-500 mb-1">Latest Vote Count</p>
+                      <p className="text-2xl font-bold text-green-400">
+                        {sidechainData.latestCheckpoint?.voteCount ?? "—"}
+                      </p>
+                    </div>
+                    <div className="bg-white/5 rounded-xl p-3 text-center border border-white/10">
+                      <p className="text-xs text-gray-500 mb-1">Last Triggered By</p>
+                      <p className="text-sm font-bold text-purple-400 capitalize mt-2">
+                        {sidechainData.latestCheckpoint?.triggeredBy ?? "—"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* No checkpoints yet */}
+                  {sidechainData.checkpoints.length === 0 && (
+                    <div className="text-center py-8">
+                      <p className="text-4xl mb-3">🔗</p>
+                      <p className="text-gray-400 text-sm">No checkpoints yet</p>
+                      <p className="text-gray-600 text-xs mt-1">
+                        First checkpoint is created automatically when a vote is revealed
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Checkpoint table */}
+                  {sidechainData.checkpoints.length > 0 && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left">
+                        <thead>
+                          <tr className="text-gray-500 text-xs uppercase tracking-wider border-b border-white/10">
+                            <th className="pb-2 pr-4">#</th>
+                            <th className="pb-2 pr-4">Merkle Root</th>
+                            <th className="pb-2 pr-4">TX Hash</th>
+                            <th className="pb-2 pr-4">Votes</th>
+                            <th className="pb-2 pr-4">Block</th>
+                            <th className="pb-2 pr-4">Trigger</th>
+                            <th className="pb-2">Time</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sidechainData.checkpoints.map((cp) => (
+                            <tr key={cp._id} className="border-t border-white/5 hover:bg-white/3 transition">
+                              <td className="py-2.5 pr-4">
+                                <span className="text-xs font-bold text-cyan-400">#{cp.checkpointNumber}</span>
+                              </td>
+                              <td className="py-2.5 pr-4">
+                                <span className="text-xs font-mono text-purple-300">
+                                  {cp.merkleRoot?.slice(0, 10)}...{cp.merkleRoot?.slice(-6)}
+                                </span>
+                              </td>
+                              <td className="py-2.5 pr-4">
+                                <span className="text-xs font-mono text-gray-400">
+                                  {cp.txHash?.slice(0, 10)}...{cp.txHash?.slice(-6)}
+                                </span>
+                              </td>
+                              <td className="py-2.5 pr-4">
+                                <span className="text-xs font-bold text-green-400">{cp.voteCount}</span>
+                              </td>
+                              <td className="py-2.5 pr-4">
+                                <span className="text-xs text-gray-500">#{cp.blockNumber}</span>
+                              </td>
+                              <td className="py-2.5 pr-4">
+                                <span className={`text-xs px-2 py-0.5 rounded-full font-semibold
+                                  ${cp.triggeredBy === "manual"
+                                    ? "bg-orange-500/20 text-orange-400"
+                                    : "bg-cyan-500/20 text-cyan-400"}`}>
+                                  {cp.triggeredBy}
+                                </span>
+                              </td>
+                              <td className="py-2.5 text-xs text-gray-500">
+                                {new Date(cp.createdAt).toLocaleString()}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Architecture explanation */}
+                  <div className="bg-white/3 rounded-xl p-4 border border-white/5">
+                    <p className="text-xs text-gray-400 font-semibold mb-2 uppercase tracking-wider">
+                      Sidechain Architecture — How It Works
+                    </p>
+                    <div className="space-y-1.5">
+                      {[
+                        ["🔗", "Private Hardhat node = our sidechain — isolated chain with its own rules"],
+                        ["📦", "All vote transactions processed on the sidechain (MongoDB + smart contract)"],
+                        ["🌿", "After each reveal, the Merkle root is computed as a cryptographic state root"],
+                        ["⛓️", "State root posted to Ethereum via anchorOffChainData() — the checkpoint TX"],
+                        ["📋", "Each checkpoint is logged here — same pattern as Polygon PoS checkpoints"],
+                        ["🔍", "Any auditor can verify: checkpoint root must match on-chain stored value"],
+                      ].map(([icon, text]) => (
+                        <div key={text} className="flex gap-2 items-start">
+                          <span className="text-sm">{icon}</span>
+                          <p className="text-xs text-gray-500">{text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                </div>
+              )}
+            </div>
+            {/* END SIDECHAIN PANEL */}
 
           </div>
         )}

@@ -10,6 +10,8 @@ const Voter = require("../models/Voter");
 const FraudLog = require("../models/FraudLog");
 const Election = require("../models/Election");
 const Candidate = require("../models/Candidate");
+// ✅ SIDECHAIN — checkpoint ledger model
+const SidechainCheckpoint = require("../models/SidechainCheckpoint");
 
 const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
 const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
@@ -82,13 +84,41 @@ async function buildVoteMerkleTree() {
   const root = "0x" + tree.getRoot().toString("hex");
   return { tree, root, leaves };
 }
-async function anchorMerkleRoot() {
+
+/* =============================================================
+   ✅ SIDECHAIN — anchorMerkleRoot with checkpoint ledger
+   Every call = one sidechain checkpoint:
+   1. Compute Merkle tree (sidechain state)
+   2. Post root to Ethereum via anchorOffChainData() (checkpoint TX)
+   3. Save SidechainCheckpoint record (permanent checkpoint ledger)
+   triggeredBy: "auto" = from reveal-vote | "manual" = admin re-anchor
+============================================================= */
+async function anchorMerkleRoot(triggeredBy = "auto") {
   const { tree, root, leaves } = await buildVoteMerkleTree();
   if (!tree || leaves.length === 0) { console.log("ℹ️  No votes to anchor yet"); return null; }
   console.log(`🌿 Anchoring Merkle root for ${leaves.length} vote(s): ${root}`);
   const tx = await sendTx((nonce) => contract.anchorOffChainData(root, { nonce }));
-  await tx.wait();
+  const receipt = await tx.wait();
   console.log(`✅ Merkle root anchored on-chain — TX: ${tx.hash}`);
+
+  // ✅ SIDECHAIN — save checkpoint to ledger (non-fatal)
+  try {
+    const last = await SidechainCheckpoint.findOne().sort({ checkpointNumber: -1 });
+    const nextNumber = last ? last.checkpointNumber + 1 : 1;
+    await SidechainCheckpoint.create({
+      checkpointNumber: nextNumber,
+      merkleRoot: root,
+      txHash: tx.hash,
+      blockNumber: receipt?.blockNumber || 0,
+      voteCount: leaves.length,
+      status: "confirmed",
+      triggeredBy,
+    });
+    console.log(`⛓️  Sidechain checkpoint #${nextNumber} saved — ${leaves.length} votes, trigger: ${triggeredBy}`);
+  } catch (err) {
+    console.error("⚠️  Checkpoint save failed (non-fatal):", err.message);
+  }
+
   return { txHash: tx.hash, root, totalVotes: leaves.length };
 }
 
@@ -104,9 +134,6 @@ function computeCommitmentHash(didHash, candidateId, nonce) {
 
 /* =============================================================
    B1 — SUSPICIOUS IP FRAUD DETECTION
-   Checks how many FraudLog entries share req.ip in the last hour.
-   If > IP_FRAUD_THRESHOLD: bumps riskScore, logs FraudLog(high),
-   adds IP to student.suspiciousIPs. Non-fatal — vote still proceeds.
 ============================================================= */
 const IP_FRAUD_THRESHOLD = 3;
 const IP_WINDOW_MS = 60 * 60 * 1000;
@@ -131,29 +158,17 @@ async function checkSuspiciousIP(student, req) {
 
 /* =============================================================
    C1 — RAPID ATTEMPT DETECTION
-   Abstract claim: "suspicious ACCESS PATTERNS" (Pillar 4).
-   Uses student.isRapidAttempt() from Student.js — returns true
-   if lastAttemptTime was < 60 seconds ago.
-   If rapid: calls handleFraud() → logs + increments riskScore
-   and may auto-blacklist at failedAttempts >= 3.
-   Always updates lastAttemptTime on every call regardless.
-   Called in BOTH commit-vote and reveal-vote, after blacklist check.
 ============================================================= */
 async function checkRapidAttempt(student, req) {
   const isRapid = student.isRapidAttempt();
-
-  // Always stamp — so the next request can accurately measure the gap
   student.lastAttemptTime = new Date();
   await student.save();
-
   if (isRapid) {
     const reason = "Rapid repeated attempt — requests submitted too fast (< 60s apart)";
     console.warn(`🚨 Rapid attempt detected — student ${student.studentId}`);
-    // handleFraud: +10 riskScore, +1 failedAttempts, auto-blacklist at 3
     await handleFraud(student, reason, req, false);
     return { flagged: true, reason };
   }
-
   return { flagged: false };
 }
 
@@ -250,27 +265,16 @@ router.post("/set-eligibility", async (req, res) => {
   } catch (error) { console.error("Eligibility Error:", error); res.status(500).json({ success: false, message: error.message }); }
 });
 
-/* =============================================================
-   POST /commit-vote
-   Guard order:
-   1. Student exists + not blacklisted
-   2. ✅ B1: checkSuspiciousIP() — IP rate abuse
-   3. ✅ C1: checkRapidAttempt() — time-based pattern (< 60s)
-   4. candidateId, election open, eligibility, no duplicate
-   5. Auto-heal DID on-chain if missing
-   6. Commit to blockchain + save to DB
-============================================================= */
+/* ── POST /commit-vote ── */
 router.post("/commit-vote", authenticateStudent, async (req, res) => {
   try {
     const student = await Student.findById(req.student.id);
     if (!student) return res.status(404).json({ success: false, message: "Student not found" });
     if (student.isBlacklisted) return res.status(403).json({ success: false, message: "You are blacklisted" });
 
-    // B1 — IP abuse detection
     const ipCheck = await checkSuspiciousIP(student, req);
     if (ipCheck.flagged) console.warn(`⚠️  IP fraud flagged on commit-vote for student ${student.studentId}`);
 
-    // C1 — Rapid time-based pattern detection
     const rapidCheck = await checkRapidAttempt(student, req);
     if (rapidCheck.flagged) {
       const refreshed = await Student.findById(req.student.id);
@@ -340,17 +344,13 @@ router.post("/commit-vote", authenticateStudent, async (req, res) => {
   } catch (error) { console.error("Commit Vote Error:", error); res.status(500).json({ success: false, message: error.message }); }
 });
 
-/* =============================================================
-   POST /reveal-vote
-   Guards: B1 IP check + C1 rapid attempt check both run here too.
-============================================================= */
+/* ── POST /reveal-vote ── */
 router.post("/reveal-vote", authenticateStudent, async (req, res) => {
   try {
     const student = await Student.findById(req.student.id);
     if (!student) return res.status(404).json({ success: false, message: "Student not found" });
     if (student.isBlacklisted) return res.status(403).json({ success: false, message: "You are blacklisted" });
 
-    // B1 + C1 dual fraud detection on reveal too
     const ipCheck = await checkSuspiciousIP(student, req);
     if (ipCheck.flagged) console.warn(`⚠️  IP fraud flagged on reveal-vote for student ${student.studentId}`);
 
@@ -391,9 +391,12 @@ router.post("/reveal-vote", authenticateStudent, async (req, res) => {
     student.voteVerificationCode = verificationCode; student.hasVoted = true; student.votedAt = new Date();
     await student.save();
 
+    // ✅ SIDECHAIN — "auto" trigger from reveal-vote
     let merkleRoot = null; let anchorTxHash = null;
-    try { const anchorResult = await anchorMerkleRoot(); if (anchorResult) { merkleRoot = anchorResult.root; anchorTxHash = anchorResult.txHash; } }
-    catch (merkleErr) { console.error("Merkle anchoring failed (non-fatal):", merkleErr.message); }
+    try {
+      const anchorResult = await anchorMerkleRoot("auto");
+      if (anchorResult) { merkleRoot = anchorResult.root; anchorTxHash = anchorResult.txHash; }
+    } catch (merkleErr) { console.error("Merkle anchoring failed (non-fatal):", merkleErr.message); }
 
     res.json({ success: true, message: "Vote successfully cast and verified!", transactionHash: revealTxHash, blockNumber, verificationCode, merkleRoot, anchorTxHash, merkleNote: merkleRoot ? "Your vote is included in the anchored Merkle root on blockchain" : "Vote recorded — Merkle anchor will be updated shortly" });
   } catch (error) { console.error("Reveal Vote Error:", error); res.status(500).json({ success: false, message: error.message }); }
@@ -444,7 +447,8 @@ router.get("/merkle-root", async (req, res) => {
     catch (chainErr) { console.log("Could not fetch on-chain Merkle state:", chainErr.message); }
     let anchorResult = null;
     if (req.query.anchor === "true") {
-      try { anchorResult = await anchorMerkleRoot(); if (anchorResult) { onChainRoot = anchorResult.root; isInSync = true; } }
+      // ✅ SIDECHAIN — "manual" trigger from admin Re-Anchor
+      try { anchorResult = await anchorMerkleRoot("manual"); if (anchorResult) { onChainRoot = anchorResult.root; isInSync = true; } }
       catch (anchorErr) { console.error("Re-anchor failed:", anchorErr.message); }
     }
     res.json({ success: true, root, totalVotes: leaves.length, onChainRoot, onChainAnchorCount, onChainLastAnchorBlock, isInSync, ...(anchorResult && { reAnchor: anchorResult }), message: isInSync ? "✅ Merkle root is synced with blockchain" : "⚠️  Merkle root is out of sync — call with ?anchor=true to re-anchor" });
@@ -468,6 +472,31 @@ router.get("/merkle-proof/:commitmentHash", async (req, res) => {
     catch (chainErr) { console.log("On-chain verification unavailable:", chainErr.message); }
     res.json({ success: true, commitmentHash, merkleRoot: root, proof, totalVotesInTree: leaves.length, isValidLocally, isVerifiedOnChain, message: isValidLocally ? "✅ This vote is included in the Merkle tree" : "❌ Proof verification failed", howToVerify: "Call verifyOffChainRecord(commitmentHash, proof) on the smart contract to verify on-chain" });
   } catch (error) { console.error("Merkle proof error:", error); res.status(500).json({ success: false, message: error.message }); }
+});
+
+/* =============================================================
+   ✅ SIDECHAIN — GET /sidechain-checkpoints
+   Returns the permanent checkpoint ledger.
+   Used by Admin Dashboard → Analytics tab → Sidechain panel.
+============================================================= */
+router.get("/sidechain-checkpoints", async (req, res) => {
+  try {
+    const checkpoints = await SidechainCheckpoint.find().sort({ checkpointNumber: -1 }).limit(50);
+    const totalCheckpoints = await SidechainCheckpoint.countDocuments();
+    const latestCheckpoint = checkpoints[0] || null;
+    res.json({
+      success: true,
+      totalCheckpoints,
+      latestCheckpoint,
+      checkpoints,
+      message: totalCheckpoints > 0
+        ? `✅ ${totalCheckpoints} sidechain checkpoint${totalCheckpoints !== 1 ? "s" : ""} recorded`
+        : "No checkpoints yet — reveal a vote to create the first checkpoint",
+    });
+  } catch (error) {
+    console.error("Sidechain checkpoints error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
 });
 
 /* ── GET /results ── */
