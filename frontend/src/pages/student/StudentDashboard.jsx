@@ -14,11 +14,15 @@ function StudentDashboard() {
   const [applicationStatus, setApplicationStatus] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // New state for enhanced features
   const [studentInfo, setStudentInfo] = useState(null);
   const [voterStatus, setVoterStatus] = useState(null);
   const [verifyingVote, setVerifyingVote] = useState(false);
   const [verificationResult, setVerificationResult] = useState(null);
+
+  // ✅ Verification code state — fetched from backend, not localStorage
+  const [savedVerificationCode, setSavedVerificationCode] = useState(null);
+  const [manualCode, setManualCode] = useState("");
+  const [showManualInput, setShowManualInput] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -34,6 +38,7 @@ function StudentDashboard() {
       fetchApplicationStatus(),
       fetchVoterStatus(),
       fetchStudentInfo(),
+      fetchVerificationCode(), // ✅ fetch from backend
     ]);
     setLoading(false);
   };
@@ -83,7 +88,6 @@ function StudentDashboard() {
   ============================================================= */
   const fetchStudentInfo = async () => {
     try {
-      // Decode JWT to get basic info
       const payload = JSON.parse(atob(token.split(".")[1]));
       setStudentInfo(payload);
     } catch {
@@ -92,27 +96,55 @@ function StudentDashboard() {
   };
 
   /* =============================================================
+     ✅ FIX 1: FETCH VERIFICATION CODE — backend only, NO localStorage
+     Removed localStorage fallback to prevent cross-user leakage.
+     Each student's JWT ensures this always returns their own code.
+  ============================================================= */
+  const fetchVerificationCode = async () => {
+    try {
+      const res = await axios.get(`${API}/api/voter/my-verification-code`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.data?.verificationCode) {
+        setSavedVerificationCode(res.data.verificationCode);
+      } else {
+        setSavedVerificationCode(null);
+      }
+    } catch {
+      setSavedVerificationCode(null);
+    }
+  };
+
+  /* =============================================================
      E2E VOTE VERIFICATION
+     Priority: backend-fetched code → manual input code
   ============================================================= */
   const handleVerifyVote = async () => {
-    const verificationCode = localStorage.getItem("voteVerificationCode");
+    const codeToUse = savedVerificationCode || manualCode.trim();
 
-    if (!verificationCode) {
-      return toast.error(
-        "No verification code found. Check your success page."
-      );
+    if (!codeToUse) {
+      toast.error("Please enter your verification code.");
+      return;
     }
 
     setVerifyingVote(true);
+    setVerificationResult(null);
     const toastId = toast.loading("🔍 Verifying your vote on blockchain...");
 
     try {
       const res = await axios.post(
         `${API}/api/voter/verify-my-vote`,
-        { verificationCode },
+        { verificationCode: codeToUse },
         { headers: { Authorization: `Bearer ${token}` } }
       );
+
+      // Save manually entered code — only if no backend code exists
+      if (!savedVerificationCode && codeToUse) {
+        setSavedVerificationCode(codeToUse);
+      }
+
       setVerificationResult(res.data.verificationDetails);
+      setShowManualInput(false);
       toast.success("✅ Vote verified!", { id: toastId });
     } catch (error) {
       toast.error(
@@ -124,9 +156,14 @@ function StudentDashboard() {
     }
   };
 
+  /* =============================================================
+     ✅ FIX 2: LOGOUT — clears voteVerificationCode from localStorage
+     Prevents stale code from leaking to the next user on same browser
+  ============================================================= */
   const handleLogout = () => {
     localStorage.removeItem("studentToken");
     localStorage.removeItem("hasVoted");
+    localStorage.removeItem("voteVerificationCode"); // ✅ prevent cross-user leak
     navigate("/student");
   };
 
@@ -321,17 +358,62 @@ function StudentDashboard() {
             <h3 className="text-sm font-semibold text-purple-400 mb-1">
               🔍 End-to-End Vote Verification
             </h3>
-            <p className="text-xs text-gray-400 mb-4">
+            <p className="text-xs text-gray-400 mb-3">
               Independently verify your vote is correctly recorded on the
               blockchain using your verification code.
             </p>
 
+            {/* ── Code status ── */}
+            {savedVerificationCode && !showManualInput ? (
+              <>
+                <p className="text-xs text-green-400/80 mb-1">
+                  ✅ Verification code found — click below to verify instantly.
+                </p>
+                <p
+                  className="text-xs text-gray-500 underline cursor-pointer mb-4"
+                  onClick={() => setShowManualInput(true)}
+                >
+                  Use a different code instead
+                </p>
+              </>
+            ) : (
+              <>
+                {!savedVerificationCode && (
+                  <p className="text-xs text-yellow-400/80 mb-3">
+                    ⚠️ No saved code found. Paste your verification code from your vote receipt below.
+                  </p>
+                )}
+
+                {/* Manual input */}
+                <div className="flex gap-2 mb-4">
+                  <input
+                    type="text"
+                    value={manualCode}
+                    onChange={(e) => setManualCode(e.target.value)}
+                    placeholder="Paste verification code (0x...)"
+                    className="flex-1 bg-white/5 border border-white/20 rounded-xl px-4 py-2.5
+                               text-sm text-white placeholder-gray-600 font-mono
+                               focus:outline-none focus:border-purple-500 transition"
+                  />
+                </div>
+
+                {savedVerificationCode && showManualInput && (
+                  <p
+                    className="text-xs text-gray-500 underline cursor-pointer mb-4"
+                    onClick={() => { setShowManualInput(false); setManualCode(""); }}
+                  >
+                    ← Use saved code instead
+                  </p>
+                )}
+              </>
+            )}
+
             <button
               onClick={handleVerifyVote}
-              disabled={verifyingVote}
+              disabled={verifyingVote || (!savedVerificationCode && !manualCode.trim())}
               className="w-full py-3 rounded-xl border border-purple-400/50
                          text-purple-400 hover:bg-purple-400/10 transition
-                         text-sm font-semibold disabled:opacity-50"
+                         text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {verifyingVote
                 ? "⏳ Verifying..."
@@ -360,8 +442,11 @@ function StudentDashboard() {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-xs text-gray-400">Block Number</span>
+                    {/* ✅ FIX 3: Show N/A for old DB-fallback votes with blockNumber 0 */}
                     <span className="text-xs text-white">
-                      {verificationResult.blockNumber}
+                      {verificationResult.blockNumber > 0
+                        ? verificationResult.blockNumber
+                        : "N/A (DB fallback vote)"}
                     </span>
                   </div>
                 </div>

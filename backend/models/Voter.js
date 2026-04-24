@@ -91,6 +91,18 @@ const voterSchema = new mongoose.Schema({
   },
 
   // ─────────────────────────────────────────
+  // ✅ BLOCK NUMBER
+  // Blockchain block number from reveal transaction
+  // Used for E2E vote verification display
+  // ─────────────────────────────────────────
+
+  blockNumber: {
+    type: Number,
+    default: null,
+    comment: "Block number of the reveal transaction on blockchain"
+  },
+
+  // ─────────────────────────────────────────
   // E2E VERIFIABLE VOTING
   // Unique code issued by blockchain after vote
   // Voter uses this to independently verify

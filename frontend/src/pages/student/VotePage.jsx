@@ -121,6 +121,11 @@ function VotePage() {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
+      // ✅ FIX: Save verification code to localStorage so StudentDashboard can access it
+      if (res.data.verificationCode) {
+        localStorage.setItem("voteVerificationCode", res.data.verificationCode);
+      }
+
       toast.success(
         "✅ Vote confirmed and verified on blockchain!",
         { id: toastId }

@@ -428,13 +428,20 @@ router.delete("/delete-student/:id", verifyToken, async (req, res) => {
 });
 
 /* =============================================================
-   TOGGLE ELECTION
+   ✅ FIXED: TOGGLE ELECTION
+   ROOT CAUSE FIX: contract.createElection() is now called with
+   proper start/end timestamps BEFORE toggleElection(true).
+   Previously electionStartTime=0 and electionEndTime=0 on-chain,
+   causing the electionActive modifier to always revert, making
+   commitVote and revealVote fall into DB fallback → blockNumber=0
+   → frontend showed "N/A (DB fallback vote)".
 ============================================================= */
 router.post("/toggle-election", verifyToken, verifyRole("superadmin"), async (req, res) => {
   try {
     let election = await Election.findOne();
 
     if (!election) {
+      // ── Create fresh election in DB ──
       election = new Election({
         title: "University Election",
         description: "Main Voting Session",
@@ -444,25 +451,54 @@ router.post("/toggle-election", verifyToken, verifyRole("superadmin"), async (re
       await election.save();
 
       try {
-        const tx = await sendTx((nonce) =>
+        // ✅ FIX: set a 7-day window so electionActive modifier passes
+        const now = Math.floor(Date.now() / 1000);
+        const startTime = now - 60;             // started 1 min ago (avoids clock skew)
+        const endTime = now + 7 * 24 * 60 * 60; // ends in 7 days
+
+        // Step 1: createElection with valid timestamps
+        const createTx = await sendTx((nonce) =>
+          contract.createElection("University Election", startTime, endTime, { nonce })
+        );
+        await createTx.wait();
+        console.log("✅ Election created on-chain:", createTx.hash);
+
+        // Step 2: open the election
+        const toggleTx = await sendTx((nonce) =>
           contract.toggleElection(true, { nonce })
         );
-        await tx.wait();
+        await toggleTx.wait();
+        console.log("✅ Election opened on-chain:", toggleTx.hash);
       } catch (chainErr) {
-        console.error("Blockchain toggle error:", chainErr.message);
+        console.error("Blockchain create/toggle error:", chainErr.message);
       }
 
       return res.json({ success: true, isOpen: true });
     }
 
+    // ── Toggle existing election ──
     election.isOpen = !election.isOpen;
     election.status = election.isOpen ? "active" : "completed";
 
     try {
-      const tx = await sendTx((nonce) =>
+      if (election.isOpen) {
+        // ✅ FIX: Re-opening — reset timestamps so electionActive passes again
+        const now = Math.floor(Date.now() / 1000);
+        const startTime = now - 60;
+        const endTime = now + 7 * 24 * 60 * 60;
+
+        const createTx = await sendTx((nonce) =>
+          contract.createElection("University Election", startTime, endTime, { nonce })
+        );
+        await createTx.wait();
+        console.log("✅ Election timestamps refreshed on-chain:", createTx.hash);
+      }
+
+      const toggleTx = await sendTx((nonce) =>
         contract.toggleElection(election.isOpen, { nonce })
       );
-      await tx.wait();
+      await toggleTx.wait();
+      console.log(`✅ Election toggled on-chain to: ${election.isOpen}`);
     } catch (chainErr) {
       console.error("Blockchain toggle error:", chainErr.message);
     }
@@ -557,14 +593,7 @@ router.post("/report-fraud/:studentId", verifyToken, async (req, res) => {
 });
 
 /* =============================================================
-   ✅ B2 — VOTE ANALYTICS
-   Changes:
-   1. topRiskStudents — NEW: top 5 students sorted by riskScore desc
-      Fields: name, studentId, riskScore, failedAttempts,
-              isBlacklisted, suspiciousIPs, status
-      Used by: Risk Score Leaderboard card in the Fraud tab
-   2. fraudBySeverity — already existed, confirmed it correctly
-      powers the HIGH / MEDIUM / LOW severity badge counts
+   VOTE ANALYTICS
 ============================================================= */
 router.get("/vote-analytics", verifyToken, async (req, res) => {
   try {
@@ -591,12 +620,10 @@ router.get("/vote-analytics", verifyToken, async (req, res) => {
       },
     ]);
 
-    // Powers the HIGH / MEDIUM / LOW severity badge counts in Fraud tab
     const fraudBySeverity = await FraudLog.aggregate([
       { $group: { _id: "$severity", count: { $sum: 1 } } },
     ]);
 
-    // ✅ B2 NEW — top 5 highest risk students for leaderboard
     const topRiskStudents = await Student.find()
       .sort({ riskScore: -1 })
       .limit(5)
@@ -614,7 +641,7 @@ router.get("/vote-analytics", verifyToken, async (req, res) => {
       turnoutPercentage,
       votesPerCandidate,
       fraudBySeverity,
-      topRiskStudents, // ✅ B2
+      topRiskStudents,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -622,11 +649,7 @@ router.get("/vote-analytics", verifyToken, async (req, res) => {
 });
 
 /* =============================================================
-   ✅ B2 + B3 — BLOCKCHAIN VOTER STATUS
-   B2: now also queries Voter collection for the student's
-       revealed vote record to get commitmentHash + verificationCode
-   B3: returns zkpProof object with commitmentHash, proofHash,
-       txHash, verified — displayed in the Admin voter status modal
+   BLOCKCHAIN VOTER STATUS
 ============================================================= */
 router.get("/voter-status/:studentId", verifyToken, async (req, res) => {
   try {
@@ -678,7 +701,6 @@ router.get("/voter-status/:studentId", verifyToken, async (req, res) => {
       console.log("Blockchain status unavailable:", chainErr.message);
     }
 
-    // ✅ B3 — fetch voter record for ZKP proof display
     const voterRecord = await Voter.findOne({
       student: student._id,
       phase: "revealed",
@@ -696,7 +718,6 @@ router.get("/voter-status/:studentId", verifyToken, async (req, res) => {
         riskScore: student.riskScore,
         failedAttempts: student.failedAttempts,
       },
-      // ✅ B3 — ZKP proof data shown in voter status modal
       zkpProof: voterRecord
         ? {
             commitmentHash: voterRecord.commitmentHash,

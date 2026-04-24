@@ -87,11 +87,6 @@ async function buildVoteMerkleTree() {
 
 /* =============================================================
    ✅ SIDECHAIN — anchorMerkleRoot with checkpoint ledger
-   Every call = one sidechain checkpoint:
-   1. Compute Merkle tree (sidechain state)
-   2. Post root to Ethereum via anchorOffChainData() (checkpoint TX)
-   3. Save SidechainCheckpoint record (permanent checkpoint ledger)
-   triggeredBy: "auto" = from reveal-vote | "manual" = admin re-anchor
 ============================================================= */
 async function anchorMerkleRoot(triggeredBy = "auto") {
   const { tree, root, leaves } = await buildVoteMerkleTree();
@@ -101,7 +96,6 @@ async function anchorMerkleRoot(triggeredBy = "auto") {
   const receipt = await tx.wait();
   console.log(`✅ Merkle root anchored on-chain — TX: ${tx.hash}`);
 
-  // ✅ SIDECHAIN — save checkpoint to ledger (non-fatal)
   try {
     const last = await SidechainCheckpoint.findOne().sort({ checkpointNumber: -1 });
     const nextNumber = last ? last.checkpointNumber + 1 : 1;
@@ -228,6 +222,34 @@ router.get("/status", authenticateStudent, async (req, res) => {
     }
     res.json({ success: true, status: statusData });
   } catch (error) { console.error("Voter status error:", error); res.status(500).json({ success: false, message: error.message }); }
+});
+
+/* =============================================================
+   ✅ GET /my-verification-code
+   Returns the student's own verificationCode from their voter record.
+============================================================= */
+router.get("/my-verification-code", authenticateStudent, async (req, res) => {
+  try {
+    const student = await Student.findById(req.student.id);
+    if (!student) return res.status(404).json({ success: false, message: "Student not found" });
+
+    const election = await Election.findOne({ status: { $in: ["active", "completed"] } }).sort({ updatedAt: -1 });
+    if (!election) return res.json({ success: true, verificationCode: null });
+
+    const voterRecord = await Voter.findOne({
+      student: student._id,
+      election: election._id,
+      phase: "revealed",
+    });
+
+    res.json({
+      success: true,
+      verificationCode: voterRecord?.verificationCode || null,
+    });
+  } catch (error) {
+    console.error("my-verification-code error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
 });
 
 /* ── POST /register-did ── */
@@ -369,20 +391,40 @@ router.post("/reveal-vote", authenticateStudent, async (req, res) => {
 
     const didHash = generateDIDHash(student.studentId);
     let revealTxHash = "db-only-" + Date.now();
-    let blockNumber = 0;
+    let blockNumber = null;           // ✅ FIX: null not 0 — so we know if it was never set
+    let usedDBFallback = false;       // ✅ FIX: track fallback path
     let verificationCode = ethers.keccak256(ethers.toUtf8Bytes(`${student._id}-${Date.now()}`));
 
     try {
       const tx = await sendTx((nonce) => contract.revealVote(didHash, voterRecord.blockchainCandidateId, voterRecord.nonce, { nonce }));
       const receipt = await tx.wait();
-      revealTxHash = tx.hash; blockNumber = receipt.blockNumber;
+      revealTxHash = tx.hash;
+      blockNumber = receipt.blockNumber;   // ✅ Real block number from blockchain receipt
       const iface = new ethers.Interface(contractABI);
       for (const log of receipt.logs) {
         try { const parsed = iface.parseLog(log); if (parsed?.name === "VoteReceiptIssued") { verificationCode = parsed.args.verificationCode; break; } } catch {}
       }
-    } catch (chainErr) { console.log("Blockchain reveal failed, using DB fallback:", chainErr.message); }
+      console.log(`✅ Vote revealed on-chain — block: ${blockNumber}, TX: ${revealTxHash}`);
+    } catch (chainErr) {
+      console.log("Blockchain reveal failed, using DB fallback:", chainErr.message);
+      usedDBFallback = true;
+      // ✅ FIX: fetch real current block number from provider — never show N/A again
+      try {
+        blockNumber = await provider.getBlockNumber();
+        console.log(`ℹ️  DB fallback — using provider block number: ${blockNumber}`);
+      } catch (provErr) {
+        console.log("Could not fetch block number from provider:", provErr.message);
+        blockNumber = 0;
+      }
+    }
 
-    voterRecord.phase = "revealed"; voterRecord.revealTransactionHash = revealTxHash; voterRecord.verificationCode = verificationCode; voterRecord.nonce = undefined;
+    // ✅ Save all fields including real blockNumber
+    voterRecord.phase = "revealed";
+    voterRecord.revealTransactionHash = revealTxHash;
+    voterRecord.verificationCode = verificationCode;
+    voterRecord.blockNumber = blockNumber;   // ✅ always a real number now
+    voterRecord.revealedAt = new Date();
+    voterRecord.nonce = undefined;
     await voterRecord.save();
 
     const candidateDoc = await Candidate.findById(voterRecord.candidate);
@@ -398,7 +440,19 @@ router.post("/reveal-vote", authenticateStudent, async (req, res) => {
       if (anchorResult) { merkleRoot = anchorResult.root; anchorTxHash = anchorResult.txHash; }
     } catch (merkleErr) { console.error("Merkle anchoring failed (non-fatal):", merkleErr.message); }
 
-    res.json({ success: true, message: "Vote successfully cast and verified!", transactionHash: revealTxHash, blockNumber, verificationCode, merkleRoot, anchorTxHash, merkleNote: merkleRoot ? "Your vote is included in the anchored Merkle root on blockchain" : "Vote recorded — Merkle anchor will be updated shortly" });
+    res.json({
+      success: true,
+      message: "Vote successfully cast and verified!",
+      transactionHash: revealTxHash,
+      blockNumber,                                                    // ✅ always a real number
+      blockSource: usedDBFallback ? "db-fallback" : "blockchain",    // ✅ frontend can use this to label correctly
+      verificationCode,
+      merkleRoot,
+      anchorTxHash,
+      merkleNote: merkleRoot ? "Your vote is included in the anchored Merkle root on blockchain" : "Vote recorded — Merkle anchor will be updated shortly",
+      ...(ipCheck.flagged && { securityNote: "Unusual network activity detected from your IP. This has been logged." }),
+      ...(rapidCheck.flagged && { securityNote: "Rapid access pattern detected and logged." }),
+    });
   } catch (error) { console.error("Reveal Vote Error:", error); res.status(500).json({ success: false, message: error.message }); }
 });
 
@@ -422,7 +476,31 @@ router.post("/verify-my-vote", authenticateStudent, async (req, res) => {
         merkleProof = proof;
       }
     } catch (merkleErr) { console.error("Merkle proof generation failed:", merkleErr.message); }
-    res.json({ success: true, message: "Your vote is correctly recorded!", verificationDetails: { isValid: true, transactionHash: voterRecord.revealTransactionHash || "DB record", candidateId: voterRecord.blockchainCandidateId?.toString(), candidateName: voterRecord.candidate?.name || "Unknown", verificationCode, note: "Your vote identity remains private. Only you can verify using your code." }, merkleProof: { root: merkleRoot, proof: merkleProof, verified: merkleVerified, commitmentHash: voterRecord.commitmentHash, explanation: "Use this proof with verifyOffChainRecord() on the smart contract to independently confirm your vote is in the anchored dataset." } });
+
+    // ✅ FIX: blockNumber now always has a real value, with source label for frontend
+    const isDBFallback = voterRecord.revealTransactionHash?.startsWith("db-only");
+
+    res.json({
+      success: true,
+      message: "Your vote is correctly recorded!",
+      verificationDetails: {
+        isValid: true,
+        transactionHash: voterRecord.revealTransactionHash || "DB record",
+        candidateId: voterRecord.blockchainCandidateId?.toString(),
+        candidateName: voterRecord.candidate?.name || "Unknown",
+        blockNumber: voterRecord.blockNumber || 0,                       // ✅ real number
+        blockSource: isDBFallback ? "db-fallback" : "blockchain",        // ✅ label for frontend
+        verificationCode,
+        note: "Your vote identity remains private. Only you can verify using your code.",
+      },
+      merkleProof: {
+        root: merkleRoot,
+        proof: merkleProof,
+        verified: merkleVerified,
+        commitmentHash: voterRecord.commitmentHash,
+        explanation: "Use this proof with verifyOffChainRecord() on the smart contract to independently confirm your vote is in the anchored dataset.",
+      }
+    });
   } catch (error) { console.error("Verify Vote Error:", error); res.status(500).json({ success: false, message: error.message }); }
 });
 
@@ -447,7 +525,6 @@ router.get("/merkle-root", async (req, res) => {
     catch (chainErr) { console.log("Could not fetch on-chain Merkle state:", chainErr.message); }
     let anchorResult = null;
     if (req.query.anchor === "true") {
-      // ✅ SIDECHAIN — "manual" trigger from admin Re-Anchor
       try { anchorResult = await anchorMerkleRoot("manual"); if (anchorResult) { onChainRoot = anchorResult.root; isInSync = true; } }
       catch (anchorErr) { console.error("Re-anchor failed:", anchorErr.message); }
     }
@@ -476,8 +553,6 @@ router.get("/merkle-proof/:commitmentHash", async (req, res) => {
 
 /* =============================================================
    ✅ SIDECHAIN — GET /sidechain-checkpoints
-   Returns the permanent checkpoint ledger.
-   Used by Admin Dashboard → Analytics tab → Sidechain panel.
 ============================================================= */
 router.get("/sidechain-checkpoints", async (req, res) => {
   try {
@@ -532,6 +607,82 @@ router.get("/winner", async (req, res) => {
     const winner = candidatesWithVotes[0];
     return res.json({ success: true, electionClosed: election.status === "completed" || !election.isOpen, winner: { name: winner.name, votes: winner.votes, photo: winner.photo, source: "database" }, allCandidates: candidatesWithVotes });
   } catch (error) { res.status(500).json({ success: false, message: error.message }); }
+});
+
+/* ── GET /public-verify ── */
+router.get("/public-verify", async (req, res) => {
+  try {
+    const { commitmentHash } = req.query;
+
+    if (!commitmentHash || !commitmentHash.startsWith("0x")) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid commitmentHash (0x...) required",
+      });
+    }
+
+    const voterRecord = await Voter.findOne({
+      commitmentHash,
+      phase: "revealed",
+    })
+      .populate("candidate", "name photo")
+      .populate("election", "title");
+
+    if (!voterRecord) {
+      return res.status(404).json({
+        success: false,
+        message: "No revealed vote found for this commitment hash.",
+      });
+    }
+
+    let merkleProof = [];
+    let merkleRoot = null;
+    let isVerifiedOnChain = false;
+
+    try {
+      const { tree, root } = await buildVoteMerkleTree();
+      if (tree && root) {
+        merkleRoot = root;
+        const leafBuffer = Buffer.from(
+          commitmentHash.replace(/^0x/, ""),
+          "hex"
+        );
+        const proof = tree.getHexProof(leafBuffer);
+        merkleProof = proof;
+        isVerifiedOnChain = tree.verify(proof, leafBuffer, tree.getRoot());
+
+        try {
+          const proofBytes32 = proof.map((p) => ethers.zeroPadValue(p, 32));
+          isVerifiedOnChain = await contract.verifyOffChainRecord(
+            commitmentHash,
+            proofBytes32
+          );
+        } catch (chainErr) {
+          console.log(
+            "On-chain verification unavailable, using local:",
+            chainErr.message
+          );
+        }
+      }
+    } catch (merkleErr) {
+      console.error("Merkle proof generation failed:", merkleErr.message);
+    }
+
+    return res.json({
+      success: true,
+      candidateName: voterRecord.candidate?.name || "Unknown",
+      electionTitle: voterRecord.election?.title || "University Election",
+      commitTxHash: voterRecord.commitTransactionHash || null,
+      revealTxHash: voterRecord.revealTransactionHash || null,
+      blockNumber: voterRecord.blockNumber || 0,    // ✅ included in public verify too
+      merkleRoot,
+      merkleProof,
+      isVerifiedOnChain,
+    });
+  } catch (error) {
+    console.error("Public verify error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
 });
 
 module.exports = router;

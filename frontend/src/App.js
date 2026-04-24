@@ -12,6 +12,7 @@ import { AnimatePresence, motion } from "framer-motion";
    📌 PUBLIC PAGES
 ================================ */
 import RoleSelection from "./pages/RoleSelection";
+import PublicVerifier from "./PublicVerifier";
 
 /* ===============================
    🎓 STUDENT PAGES
@@ -125,6 +126,9 @@ function AnimatedRoutes() {
 
             {/* ── FALLBACK ── */}
             <Route path="*" element={<RoleSelection />} />
+
+
+            <Route path="/verify" element={<PublicVerifier />} />
 
           </Routes>
         </motion.div>

@@ -85,10 +85,10 @@ const statusLimiter = rateLimit({
   message: { success: false, message: "Too many status requests. Please wait." },
 });
 
-// Vote action limiter — 20 per 15 min (commit/reveal only)
+// Vote action limiter — 100 per 15 min (commit/reveal only)
 const voteLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: 100,
   message: { success: false, message: "Too many voting attempts. Please wait." },
 });
 
