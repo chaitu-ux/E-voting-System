@@ -155,6 +155,16 @@ E-votingSystem/
 ```
 
 ---
+### Default Credentials (for testing)
+
+Admin:
+Email: [admin@university.com](mailto:admin@evoting.com)
+Password: 123456
+
+Super Admin:
+Email: [supersayan@university.com](mailto:superadmin@evoting.com)
+Password: 123456
+---------
 
 ## 🔐 Identity, Authentication and Privacy
 
